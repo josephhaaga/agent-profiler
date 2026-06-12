@@ -1,0 +1,21 @@
+{
+  "name": "agent-profiler",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.2.0",
+  "workspaces": [
+    "packages/*",
+    "integrations/*"
+  ],
+  "scripts": {
+    "dev": "bun run --cwd packages/server dev",
+    "build": "bun run --cwd packages/schema build && bun run --cwd packages/store build && bun run --cwd packages/server build && bun run --cwd packages/web build",
+    "typecheck": "bun run --cwd packages/schema typecheck && bun run --cwd packages/store typecheck && bun run --cwd packages/server typecheck && bun run --cwd packages/web typecheck",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.13",
+    "typescript": "^5.8.0"
+  }
+}
