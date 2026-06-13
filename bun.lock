@@ -9,6 +9,36 @@
         "typescript": "^5.8.0",
       },
     },
+    "integrations/opencode": {
+      "name": "@harness-profiler/opencode",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agent-profiler/schema": "workspace:*",
+      },
+    },
+    "packages/ingest": {
+      "name": "@agent-profiler/ingest",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agent-profiler/schema": "workspace:*",
+        "@agent-profiler/store": "workspace:*",
+      },
+    },
+    "packages/profiler": {
+      "name": "@agent-profiler/profiler",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agent-profiler/schema": "workspace:*",
+        "@agent-profiler/store": "workspace:*",
+      },
+    },
+    "packages/proxy": {
+      "name": "@agent-profiler/proxy",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agent-profiler/schema": "workspace:*",
+      },
+    },
     "packages/schema": {
       "name": "@agent-profiler/schema",
       "version": "0.1.0",
@@ -17,6 +47,8 @@
       "name": "@agent-profiler/server",
       "version": "0.1.0",
       "dependencies": {
+        "@agent-profiler/ingest": "workspace:*",
+        "@agent-profiler/profiler": "workspace:*",
         "@agent-profiler/schema": "workspace:*",
         "@agent-profiler/store": "workspace:*",
       },
@@ -45,6 +77,12 @@
     },
   },
   "packages": {
+    "@agent-profiler/ingest": ["@agent-profiler/ingest@workspace:packages/ingest"],
+
+    "@agent-profiler/profiler": ["@agent-profiler/profiler@workspace:packages/profiler"],
+
+    "@agent-profiler/proxy": ["@agent-profiler/proxy@workspace:packages/proxy"],
+
     "@agent-profiler/schema": ["@agent-profiler/schema@workspace:packages/schema"],
 
     "@agent-profiler/server": ["@agent-profiler/server@workspace:packages/server"],
@@ -142,6 +180,8 @@
     "@esbuild/win32-ia32": ["@esbuild/win32-ia32@0.25.12", "", { "os": "win32", "cpu": "ia32" }, "sha512-HkqnmmBoCbCwxUKKNPBixiWDGCpQGVsrQfJoVGYLPT41XWF8lHuE5N6WhVia2n4o5QK5M4tYr21827fNhi4byQ=="],
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.25.12", "", { "os": "win32", "cpu": "x64" }, "sha512-alJC0uCZpTFrSL0CCDjcgleBXPnCrEAhTBILpeAp7M/OFgoqtAetfBzX0xM00MUsVVPpVjlPuMbREqnZCXaTnA=="],
+
+    "@harness-profiler/opencode": ["@harness-profiler/opencode@workspace:integrations/opencode"],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 

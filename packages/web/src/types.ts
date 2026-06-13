@@ -1,38 +1,5 @@
 export type HarnessKind = "opencode" | "vscode" | "custom";
 
-export type SpanKind = "session" | "turn" | "llm" | "tool";
-
-export interface SpanBody {
-  id: string;
-  kind: SpanKind;
-  sessionId: string;
-  turnId?: string;
-  parentId?: string;
-  name: string;
-  startedAt: string;
-  endedAt?: string;
-  attributes: Record<string, unknown>;
-}
-
-export interface PromptSegment {
-  order: number;
-  sourceKind: string;
-  sourceName: string;
-  text: string;
-  sha256: string;
-  charLen: number;
-  tokenEstimate?: number;
-}
-
-export interface ToolDefinition {
-  name: string;
-  kind: "builtin" | "mcp" | "skill" | "other";
-  schema: Record<string, unknown>;
-  description?: string;
-  sha256: string;
-  tokenEstimate?: number;
-}
-
 export interface SessionRecord {
   id: string;
   harness: HarnessKind;
@@ -118,21 +85,6 @@ export interface PromptSegmentRecord {
   contributedBy?: string;
 }
 
-export interface ToolDefRecord {
-  sessionId: string;
-  name: string;
-  kind: "builtin" | "mcp" | "skill" | "other";
-  schemaJson: string;
-  schemaTokensEst: number;
-  sha256: string;
-}
-
-export interface BlobRecord {
-  ref: string;
-  mime: string;
-  bytes: string;
-}
-
 export interface Insight {
   id: string;
   scopeType: "session" | "turn" | "harness";
@@ -145,8 +97,21 @@ export interface Insight {
   createdAt: string;
 }
 
-// SSE event shape for live tail
-export interface LiveTailEvent {
-  type: "session" | "turn" | "llm_call" | "tool_call" | "insight";
-  data: SessionRecord | TurnRecord | LlmCallRecord | ToolCallRecord | Insight;
+export interface CompareResult {
+  metrics: Array<{
+    harness: string;
+    sessionCount: number;
+    meanCacheHitRatio: number;
+    meanTokensPerTurn: number;
+    meanCostPerTurn: number;
+    meanLatencyMsPerTurn: number;
+    meanTurnsPerSession: number;
+  }>;
+  pairwiseDeltas: Array<{
+    from: string; to: string;
+    cacheHitRatioDelta: { delta: number; ciLow: number; ciHigh: number };
+    tokensPerTurnDelta: { delta: number; ciLow: number; ciHigh: number };
+    costPerTurnDelta: { delta: number; ciLow: number; ciHigh: number };
+  }>;
+  insights: Insight[];
 }
