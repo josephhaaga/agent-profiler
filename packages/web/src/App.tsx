@@ -1,38 +1,39 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity, ArrowLeft, ChevronRight, Command, GitCompare,
+  Info, LayoutDashboard, Loader2, Radio, TriangleAlert, X,
+} from "lucide-react";
 import { api } from "./api";
 import type {
-  CompareResult,
-  Insight,
-  LlmCallRecord,
-  PromptSegmentRecord,
-  SessionRecord,
-  ToolCallRecord,
-  TurnRecord,
+  CompareResult, Insight, LlmCallRecord, PromptSegmentRecord,
+  SessionRecord, ToolCallRecord, TurnRecord,
 } from "./types";
 import { useLiveTail } from "./useLiveTail";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
-// ── Utility ───────────────────────────────────────────────────────────────────
+// ── Formatters ────────────────────────────────────────────────────────────────
 
 function fmt(n: number, decimals = 0): string {
-  return n.toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
+  return n.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
-
 function fmtMs(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
-
 function fmtCost(c: number): string {
   return c < 0.001 ? `$${(c * 1000).toFixed(3)}m` : `$${c.toFixed(4)}`;
 }
-
 function fmtRatio(r: number): string {
   return `${(r * 100).toFixed(1)}%`;
 }
-
 function ago(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
@@ -40,115 +41,11 @@ function ago(iso: string): string {
   if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
   return new Date(iso).toLocaleDateString();
 }
-
 function cacheRatio(s: { promptTokens: number; cacheReadTokens: number }): number {
   return s.promptTokens > 0 ? s.cacheReadTokens / s.promptTokens : 0;
 }
 
-// ── Badge ─────────────────────────────────────────────────────────────────────
-
-function Badge({
-  label,
-  variant = "neutral",
-}: {
-  label: string;
-  variant?: "neutral" | "warn" | "critical" | "ok" | "muted";
-}) {
-  const colors: Record<string, string> = {
-    neutral: "var(--badge-neutral)",
-    warn: "var(--badge-warn)",
-    critical: "var(--badge-critical)",
-    ok: "var(--badge-ok)",
-    muted: "var(--badge-muted)",
-  };
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "1px 7px",
-        borderRadius: 99,
-        fontSize: 11,
-        fontWeight: 600,
-        letterSpacing: "0.04em",
-        background: colors[variant],
-        color: "rgba(255,255,255,0.9)",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
-// ── InsightCard ───────────────────────────────────────────────────────────────
-
-function InsightCard({ insight }: { insight: Insight }) {
-  const variant =
-    insight.severity === "critical"
-      ? "critical"
-      : insight.severity === "warn"
-        ? "warn"
-        : "neutral";
-  return (
-    <div className="insight-card" data-severity={insight.severity}>
-      <div className="insight-header">
-        <Badge label={insight.severity.toUpperCase()} variant={variant} />
-        <span className="insight-kind">{insight.kind}</span>
-        <span className="insight-title">{insight.title}</span>
-      </div>
-      <p className="insight-summary">{insight.summary}</p>
-    </div>
-  );
-}
-
-// ── Waterfall bar ─────────────────────────────────────────────────────────────
-
-function WaterfallBar({
-  label,
-  latencyMs,
-  maxMs,
-  color,
-}: {
-  label: string;
-  latencyMs: number;
-  maxMs: number;
-  color: string;
-}) {
-  const pct = maxMs > 0 ? Math.max(2, (latencyMs / maxMs) * 100) : 2;
-  return (
-    <div className="waterfall-row">
-      <span className="waterfall-label" title={label}>
-        {label}
-      </span>
-      <div className="waterfall-track">
-        <div
-          className="waterfall-bar"
-          style={{ width: `${pct}%`, background: color }}
-          title={fmtMs(latencyMs)}
-        />
-      </div>
-      <span className="waterfall-val">{fmtMs(latencyMs)}</span>
-    </div>
-  );
-}
-
-// ── Treemap segment (for prompt composition) ──────────────────────────────────
-
-const SEGMENT_COLORS: Record<string, string> = {
-  system: "#3b82f6",
-  tool: "#f59e0b",
-  mcp: "#8b5cf6",
-  skill: "#10b981",
-  user: "#6b7280",
-  assistant: "#6366f1",
-  instructions: "#3b82f6",
-};
-
-function segColor(sourceKind: string): string {
-  return SEGMENT_COLORS[sourceKind] ?? "#4b5563";
-}
-
-// ── Views ─────────────────────────────────────────────────────────────────────
+// ── View types ────────────────────────────────────────────────────────────────
 
 type View =
   | { page: "sessions" }
@@ -156,16 +53,91 @@ type View =
   | { page: "turn"; id: string; sessionId: string }
   | { page: "cache"; sessionId: string }
   | { page: "prompt"; llmCallId: string; sessionId: string }
-  | { page: "rightsizing" }
   | { page: "compare" };
+
+// ── Insight severity helpers ──────────────────────────────────────────────────
+
+function InsightBadge({ severity }: { severity: Insight["severity"] }) {
+  const variant =
+    severity === "critical" ? "critical" : severity === "warn" ? "warn" : "info";
+  const Icon = severity === "critical" ? TriangleAlert : severity === "warn" ? TriangleAlert : Info;
+  return (
+    <Badge variant={variant} className="gap-1">
+      <Icon className="h-2.5 w-2.5" />
+      {severity}
+    </Badge>
+  );
+}
+
+// Prominent insight card — Tufte: the insight IS the headline
+function InsightCard({ insight }: { insight: Insight }) {
+  const border =
+    insight.severity === "critical"
+      ? "border-red-500/30 bg-red-500/5"
+      : insight.severity === "warn"
+        ? "border-amber-500/25 bg-amber-500/5"
+        : "border-border bg-card";
+  return (
+    <div className={cn("rounded-lg border px-4 py-3", border)}>
+      <div className="flex items-start gap-3">
+        <InsightBadge severity={insight.severity} />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-foreground leading-snug">{insight.title}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{insight.summary}</p>
+        </div>
+        <code className="shrink-0 text-[10px] text-muted-foreground font-mono">{insight.kind}</code>
+      </div>
+    </div>
+  );
+}
+
+// ── Metric row (replaces stat boxes) — Tufte: numbers on a baseline, no boxes ─
+
+function MetricRow({
+  metrics,
+}: {
+  metrics: Array<{ label: string; value: string; delta?: string; deltaDir?: "up" | "down" | "neutral"; highlight?: "ok" | "warn" }>;
+}) {
+  return (
+    <div className="flex flex-wrap gap-x-8 gap-y-3 py-3">
+      {metrics.map((m) => (
+        <div key={m.label} className="flex flex-col gap-0.5">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            {m.label}
+          </span>
+          <div className="flex items-baseline gap-1.5">
+            <span
+              className={cn(
+                "text-base font-semibold tabular-nums",
+                m.highlight === "ok" && "text-[hsl(var(--green))]",
+                m.highlight === "warn" && "text-[hsl(var(--amber))]",
+                !m.highlight && "text-foreground"
+              )}
+            >
+              {m.value}
+            </span>
+            {m.delta && (
+              <span
+                className={cn(
+                  "text-[10px] font-medium tabular-nums",
+                  m.deltaDir === "up" && "text-[hsl(var(--green))]",
+                  m.deltaDir === "down" && "text-[hsl(var(--red))]",
+                  m.deltaDir === "neutral" && "text-muted-foreground"
+                )}
+              >
+                {m.delta}
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ── Sessions Explorer ─────────────────────────────────────────────────────────
 
-function SessionsView({
-  onSelect,
-}: {
-  onSelect: (id: string) => void;
-}) {
+function SessionsView({ onSelect }: { onSelect: (id: string) => void }) {
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = useState<keyof SessionRecord>("startedAt");
@@ -174,11 +146,7 @@ function SessionsView({
 
   useEffect(() => {
     setLoading(true);
-    api
-      .sessions()
-      .then((d) => setSessions(d.sessions))
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    api.sessions().then((d) => setSessions(d.sessions)).catch(console.error).finally(() => setLoading(false));
   }, []);
 
   const sorted = useMemo(() => {
@@ -186,84 +154,316 @@ function SessionsView({
       ? sessions.filter(
           (s) =>
             s.id.includes(filter) ||
-            s.agent?.includes(filter) ||
-            s.model?.includes(filter) ||
+            s.agent?.toLowerCase().includes(filter.toLowerCase()) ||
+            s.model?.toLowerCase().includes(filter.toLowerCase()) ||
             s.harness.includes(filter)
         )
       : sessions;
-
     return [...filtered].sort((a, b) => {
-      const av = a[sortKey];
-      const bv = b[sortKey];
-      const cmp =
-        typeof av === "number" && typeof bv === "number"
-          ? av - bv
-          : String(av ?? "").localeCompare(String(bv ?? ""));
+      const av = a[sortKey], bv = b[sortKey];
+      const cmp = typeof av === "number" && typeof bv === "number"
+        ? av - bv : String(av ?? "").localeCompare(String(bv ?? ""));
       return sortDir === "asc" ? cmp : -cmp;
     });
   }, [sessions, filter, sortKey, sortDir]);
 
   function toggleSort(key: keyof SessionRecord) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDir("desc");
-    }
+    else { setSortKey(key); setSortDir("desc"); }
   }
 
-  const cols: { key: keyof SessionRecord; label: string; render: (s: SessionRecord) => React.ReactNode }[] = [
-    { key: "startedAt", label: "Started", render: (s) => ago(s.startedAt) },
-    { key: "harness", label: "Harness", render: (s) => <Badge label={s.harness} variant="neutral" /> },
-    { key: "agent", label: "Agent", render: (s) => s.agent ?? "—" },
-    { key: "model", label: "Model", render: (s) => s.model ?? "—" },
-    { key: "turnCount", label: "Turns", render: (s) => fmt(s.turnCount) },
-    { key: "promptTokens", label: "Prompt tok", render: (s) => fmt(s.promptTokens) },
-    { key: "cacheReadTokens", label: "Cache hit", render: (s) => <span style={{ color: cacheRatio(s) > 0.5 ? "var(--green)" : "var(--amber)" }}>{fmtRatio(cacheRatio(s))}</span> },
-    { key: "costTotal", label: "Cost", render: (s) => fmtCost(s.costTotal) },
-  ];
+  function SortHead({ col, label }: { col: keyof SessionRecord; label: string }) {
+    const active = sortKey === col;
+    return (
+      <TableHead
+        className={cn("cursor-pointer select-none hover:text-foreground", active && "text-foreground")}
+        onClick={() => toggleSort(col)}
+      >
+        {label}{active ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+      </TableHead>
+    );
+  }
 
   return (
-    <div className="view">
-      <div className="view-header">
-        <h2>Sessions</h2>
-        <input
-          className="filter-input"
-          placeholder="Filter by id, agent, model, harness..."
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-lg font-semibold">Sessions</h1>
+        <Input
+          className="w-64"
+          placeholder="Filter by id, agent, model, harness…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
       </div>
+
       {loading ? (
-        <p className="muted">Loading…</p>
+        <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        </div>
       ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                {cols.map((c) => (
-                  <th key={c.key} onClick={() => toggleSort(c.key)} className="sortable">
-                    {c.label} {sortKey === c.key ? (sortDir === "asc" ? "↑" : "↓") : ""}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((s) => (
-                <tr key={s.id} onClick={() => onSelect(s.id)} className="clickable">
-                  {cols.map((c) => <td key={c.key}>{c.render(s)}</td>)}
-                </tr>
-              ))}
+        <div className="rounded-lg border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <SortHead col="startedAt" label="Started" />
+                <SortHead col="harness" label="Harness" />
+                <SortHead col="agent" label="Agent" />
+                <SortHead col="model" label="Model" />
+                <SortHead col="turnCount" label="Turns" />
+                <SortHead col="promptTokens" label="Prompt tok" />
+                <SortHead col="cacheReadTokens" label="Cache hit" />
+                <SortHead col="costTotal" label="Cost" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sorted.map((s) => {
+                const hit = cacheRatio(s);
+                return (
+                  <TableRow
+                    key={s.id}
+                    className="cursor-pointer"
+                    onClick={() => onSelect(s.id)}
+                  >
+                    <TableCell className="text-muted-foreground">{ago(s.startedAt)}</TableCell>
+                    <TableCell>
+                      {/* Tufte: left-border color strip instead of full badge pill */}
+                      <span className="flex items-center gap-1.5">
+                        <span
+                          className="inline-block w-0.5 h-4 rounded-full shrink-0"
+                          style={{
+                            background:
+                              s.harness === "opencode" ? "hsl(var(--primary))"
+                              : s.harness === "vscode" ? "hsl(var(--purple))"
+                              : "hsl(var(--muted-foreground))",
+                          }}
+                        />
+                        <span className="text-xs">{s.harness}</span>
+                      </span>
+                    </TableCell>
+                    <TableCell>{s.agent ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                    <TableCell className="text-muted-foreground">{s.model ?? "—"}</TableCell>
+                    <TableCell className="tabular-nums">{fmt(s.turnCount)}</TableCell>
+                    <TableCell className="tabular-nums text-muted-foreground">{fmt(s.promptTokens)}</TableCell>
+                    <TableCell>
+                      <span className={cn(
+                        "tabular-nums font-medium",
+                        hit > 0.5 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--amber))]"
+                      )}>
+                        {fmtRatio(hit)}
+                      </span>
+                    </TableCell>
+                    <TableCell className="tabular-nums font-medium">{fmtCost(s.costTotal)}</TableCell>
+                  </TableRow>
+                );
+              })}
               {!sorted.length && (
-                <tr>
-                  <td colSpan={cols.length} className="muted center">
-                    No sessions yet. Point opencode-openinference at this server's OTLP endpoint.
-                  </td>
-                </tr>
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-12">
+                    No sessions yet. Point your harness OTLP exporter at{" "}
+                    <code className="text-xs bg-secondary px-1 py-0.5 rounded">
+                      http://localhost:7070/v1/traces
+                    </code>
+                  </TableCell>
+                </TableRow>
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Composite session timeline chart ─────────────────────────────────────────
+// Tufte: one chart that answers "where did cost spike and why?"
+// Bars = cost per turn; line = cache hit ratio; dots = tool call count
+
+function SessionTimeline({
+  turns,
+  onTurnClick,
+}: {
+  turns: TurnRecord[];
+  onTurnClick: (id: string) => void;
+}) {
+  if (!turns.length) return null;
+
+  const BAR_H = 80;
+  const LINE_H = 40;
+  const TOTAL_H = BAR_H + LINE_H;
+  const padL = 36, padR = 8, padTop = 8, labelH = 20;
+
+  const maxCost = Math.max(...turns.map((t) => t.cost), 0.0001);
+  const maxTools = Math.max(...turns.map((t) => t.llmRoundTrips), 1);
+  const n = turns.length;
+
+  // Colour thresholds
+  function barColor(t: TurnRecord) {
+    const ratio = t.promptTokens > 0 ? t.cacheReadTokens / t.promptTokens : 0;
+    if (ratio > 0.5) return "hsl(var(--green))";
+    if (t.cost / maxCost > 0.6) return "hsl(var(--red))";
+    return "hsl(var(--primary))";
+  }
+
+  const w = 100; // SVG user units per column (percent-like; viewBox sets scale)
+  const totalW = n * w + padL + padR;
+  const totalH = TOTAL_H + padTop + labelH;
+
+  // Build cache-hit polyline points
+  const polyline = turns
+    .map((t, i) => {
+      const cx = padL + i * w + w / 2;
+      const ratio = t.promptTokens > 0 ? t.cacheReadTokens / t.promptTokens : 0;
+      const y = padTop + BAR_H + LINE_H * (1 - ratio);
+      return `${cx},${y}`;
+    })
+    .join(" ");
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-sm bg-[hsl(var(--primary))]" /> cost/turn
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-3 border-t-2 border-[hsl(var(--amber))]" /> cache hit %
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <svg
+          viewBox={`0 0 ${totalW} ${totalH}`}
+          className="w-full"
+          style={{ minWidth: Math.max(320, n * 28), height: totalH * 1.5 }}
+        >
+          {/* Y-axis gridlines (cost) */}
+          {[0.25, 0.5, 0.75, 1].map((frac) => {
+            const y = padTop + BAR_H * (1 - frac);
+            return (
+              <line
+                key={frac}
+                x1={padL}
+                y1={y}
+                x2={totalW - padR}
+                y2={y}
+                stroke="hsl(var(--border))"
+                strokeWidth={0.5}
+              />
+            );
+          })}
+
+          {/* 50% cache hit reference line */}
+          <line
+            x1={padL}
+            y1={padTop + BAR_H + LINE_H * 0.5}
+            x2={totalW - padR}
+            y2={padTop + BAR_H + LINE_H * 0.5}
+            stroke="hsl(var(--amber))"
+            strokeWidth={0.8}
+            strokeDasharray="3 3"
+            opacity={0.5}
+          />
+          <text
+            x={padL - 2}
+            y={padTop + BAR_H + LINE_H * 0.5 + 1}
+            textAnchor="end"
+            fontSize={6}
+            fill="hsl(var(--amber))"
+            opacity={0.7}
+          >50%</text>
+
+          {/* Bars */}
+          {turns.map((t, i) => {
+            const bh = Math.max(2, (t.cost / maxCost) * BAR_H);
+            const x = padL + i * w + w * 0.15;
+            const bw = w * 0.7;
+            return (
+              <rect
+                key={t.id}
+                x={x}
+                y={padTop + BAR_H - bh}
+                width={bw}
+                height={bh}
+                rx={2}
+                fill={barColor(t)}
+                opacity={0.85}
+                className="cursor-pointer hover:opacity-100 transition-opacity"
+                onClick={() => onTurnClick(t.id)}
+              >
+                <title>{`Turn ${t.idx + 1}: ${fmtCost(t.cost)}`}</title>
+              </rect>
+            );
+          })}
+
+          {/* Cache hit polyline */}
+          <polyline
+            points={polyline}
+            fill="none"
+            stroke="hsl(var(--amber))"
+            strokeWidth={1.5}
+            strokeLinejoin="round"
+            opacity={0.9}
+          />
+          {turns.map((t, i) => {
+            const ratio = t.promptTokens > 0 ? t.cacheReadTokens / t.promptTokens : 0;
+            const cx = padL + i * w + w / 2;
+            const cy = padTop + BAR_H + LINE_H * (1 - ratio);
+            return (
+              <circle
+                key={t.id}
+                cx={cx}
+                cy={cy}
+                r={3}
+                fill="hsl(var(--amber))"
+                opacity={0.9}
+                className="cursor-pointer"
+                onClick={() => onTurnClick(t.id)}
+              />
+            );
+          })}
+
+          {/* Tool call dots (above bars) */}
+          {turns.map((t, i) => {
+            const cx = padL + i * w + w / 2;
+            const r = 2 + (t.llmRoundTrips / maxTools) * 3;
+            const bh = Math.max(2, (t.cost / maxCost) * BAR_H);
+            const cy = padTop + BAR_H - bh - 4;
+            if (t.llmRoundTrips === 0) return null;
+            return (
+              <circle
+                key={t.id}
+                cx={cx}
+                cy={cy}
+                r={r}
+                fill="none"
+                stroke="hsl(var(--primary))"
+                strokeWidth={1}
+                opacity={0.6}
+              />
+            );
+          })}
+
+          {/* Turn labels */}
+          {turns.map((t, i) => (
+            <text
+              key={t.id}
+              x={padL + i * w + w / 2}
+              y={totalH - 4}
+              textAnchor="middle"
+              fontSize={7}
+              fill="hsl(var(--muted-foreground))"
+            >
+              {t.idx + 1}
+            </text>
+          ))}
+
+          {/* Y-axis cost labels */}
+          <text x={padL - 2} y={padTop + 4} textAnchor="end" fontSize={6} fill="hsl(var(--muted-foreground))">
+            {fmtCost(maxCost)}
+          </text>
+          <text x={padL - 2} y={padTop + BAR_H} textAnchor="end" fontSize={6} fill="hsl(var(--muted-foreground))">
+            $0
+          </text>
+        </svg>
+      </div>
     </div>
   );
 }
@@ -300,147 +500,173 @@ function SessionDetailView({
     }
   }
 
-  if (!session) return <p className="muted">Loading…</p>;
+  if (!session) {
+    return (
+      <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
 
   const hitRatio = cacheRatio(session);
+  // Tufte: top insights sorted by severity so the headline is first
+  const topInsights = [...insights].sort((a, b) => {
+    const order = { critical: 0, warn: 1, info: 2 };
+    return order[a.severity] - order[b.severity];
+  });
+
+  // Find peak cost turn for narrative headline
+  const peakTurn = turns.length > 0 ? turns.reduce((a, b) => (b.cost > a.cost ? b : a)) : null;
+  const peakFrac = peakTurn && session.costTotal > 0 ? peakTurn.cost / session.costTotal : 0;
+  const lowestCacheTurn = turns.length > 0
+    ? turns.reduce((a, b) => {
+        const ra = a.promptTokens > 0 ? a.cacheReadTokens / a.promptTokens : 1;
+        const rb = b.promptTokens > 0 ? b.cacheReadTokens / b.promptTokens : 1;
+        return rb < ra ? b : a;
+      })
+    : null;
 
   return (
-    <div className="view">
-      <div className="view-header">
-        <div>
-          <h2 style={{ marginBottom: 4 }}>Session</h2>
-          <code className="id-chip">{session.id}</code>
+    <div className="space-y-5">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="space-y-0.5">
+          <h1 className="text-lg font-semibold">Session</h1>
+          <code className="text-[11px] text-muted-foreground font-mono">{session.id}</code>
         </div>
-        <div className="btn-row">
-          <button className="ghost" onClick={onCacheView}>Cache panel</button>
-          <button className="ghost" onClick={runProfile} disabled={profiling}>
-            {profiling ? "Profiling…" : "Run profilers"}
-          </button>
+        <div className="flex gap-2">
+          <Button variant="ghost" size="sm" onClick={onCacheView}>Cache detail</Button>
+          <Button variant="outline" size="sm" onClick={runProfile} disabled={profiling}>
+            {profiling ? <><Loader2 className="h-3 w-3 animate-spin" /> Running…</> : "Run profilers"}
+          </Button>
         </div>
       </div>
 
-      {/* Stats strip */}
-      <div className="stats-strip">
-        <StatBox label="Turns" value={fmt(session.turnCount)} />
-        <StatBox label="LLM calls" value={fmt(session.llmCallCount)} />
-        <StatBox label="Tool calls" value={fmt(session.toolCallCount)} />
-        <StatBox label="Prompt tok" value={fmt(session.promptTokens)} />
-        <StatBox label="Completion tok" value={fmt(session.completionTokens)} />
-        <StatBox label="Cache hit" value={fmtRatio(hitRatio)} highlight={hitRatio < 0.3 ? "warn" : "ok"} />
-        <StatBox label="Cost" value={fmtCost(session.costTotal)} />
-        <StatBox label="Harness" value={session.harness} />
-        {session.model && <StatBox label="Model" value={session.model} />}
-      </div>
-
-      {/* Insights */}
-      {insights.length > 0 && (
-        <section className="section">
-          <h3>Insights</h3>
-          <div className="insight-list">
-            {insights.map((ins) => (
-              <InsightCard key={ins.id} insight={ins} />
-            ))}
-          </div>
-        </section>
+      {/* Tufte: headline narrative first, then supporting data */}
+      {peakTurn && peakFrac > 0.25 && (
+        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-foreground">
+          Turn {peakTurn.idx + 1} consumed{" "}
+          <span className="font-semibold text-[hsl(var(--amber))]">{fmtRatio(peakFrac)}</span> of session cost
+          {lowestCacheTurn && lowestCacheTurn.id !== peakTurn.id && (
+            <>
+              {". "}Lowest cache efficiency at turn {lowestCacheTurn.idx + 1}{" "}
+              <span className="font-semibold text-[hsl(var(--red))]">
+                ({fmtRatio(lowestCacheTurn.promptTokens > 0 ? lowestCacheTurn.cacheReadTokens / lowestCacheTurn.promptTokens : 0)})
+              </span>
+            </>
+          )}.
+        </div>
       )}
 
-      {/* Turns table */}
-      <section className="section">
-        <h3>Turns ({turns.length})</h3>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>User message</th>
-                <th>LLM calls</th>
-                <th>Prompt tok</th>
-                <th>Cache hit</th>
-                <th>Cost</th>
-                <th>Signal</th>
-              </tr>
-            </thead>
-            <tbody>
+      {/* Top-priority insights — before metrics, not after */}
+      {topInsights.length > 0 && (
+        <div className="space-y-2">
+          {topInsights.slice(0, 3).map((ins) => (
+            <InsightCard key={ins.id} insight={ins} />
+          ))}
+          {topInsights.length > 3 && (
+            <p className="text-xs text-muted-foreground pl-1">
+              +{topInsights.length - 3} more insights — run profilers to see all
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Metric baseline — max 5, no boxes */}
+      <Separator />
+      <MetricRow
+        metrics={[
+          { label: "Cost", value: fmtCost(session.costTotal) },
+          { label: "Cache hit", value: fmtRatio(hitRatio), highlight: hitRatio < 0.3 ? "warn" : "ok" },
+          { label: "Prompt tok", value: fmt(session.promptTokens) },
+          { label: "Turns", value: fmt(session.turnCount) },
+          { label: "Tool calls", value: fmt(session.toolCallCount) },
+        ]}
+      />
+      <Separator />
+
+      {/* Composite timeline */}
+      {turns.length > 1 && (
+        <div className="space-y-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Cost & cache per turn — click to drill in
+          </h2>
+          <SessionTimeline turns={turns} onTurnClick={onTurnSelect} />
+        </div>
+      )}
+
+      {/* Slim turns table — 4 columns, not 8 */}
+      <div className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Turns ({turns.length})
+        </h2>
+        <div className="rounded-lg border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>#</TableHead>
+                <TableHead>User message</TableHead>
+                <TableHead>Cost</TableHead>
+                <TableHead>Cache %</TableHead>
+                <TableHead>Signal</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {turns.map((t) => {
-                const turnCacheRatio = (t.promptTokens > 0) ? t.cacheReadTokens / t.promptTokens : 0;
+                const tr = t.promptTokens > 0 ? t.cacheReadTokens / t.promptTokens : 0;
                 return (
-                  <tr key={t.id} onClick={() => onTurnSelect(t.id)} className="clickable">
-                    <td>{t.idx + 1}</td>
-                    <td className="truncate" style={{ maxWidth: 280 }}>
+                  <TableRow key={t.id} className="cursor-pointer" onClick={() => onTurnSelect(t.id)}>
+                    <TableCell className="text-muted-foreground tabular-nums">{t.idx + 1}</TableCell>
+                    <TableCell className="max-w-xs truncate text-muted-foreground">
                       {t.userText?.slice(0, 80) ?? "—"}
-                    </td>
-                    <td>{t.llmRoundTrips}</td>
-                    <td>{fmt(t.promptTokens)}</td>
-                    <td>
-                      <span style={{ color: turnCacheRatio > 0.5 ? "var(--green)" : "var(--amber)" }}>
-                        {fmtRatio(turnCacheRatio)}
+                    </TableCell>
+                    <TableCell className="tabular-nums font-medium">{fmtCost(t.cost)}</TableCell>
+                    <TableCell>
+                      <span className={cn(
+                        "tabular-nums",
+                        tr > 0.5 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--amber))]"
+                      )}>
+                        {fmtRatio(tr)}
                       </span>
-                    </td>
-                    <td>{fmtCost(t.cost)}</td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       {t.endSignal === "error" ? (
-                        <Badge label="error" variant="critical" />
+                        <Badge variant="critical">error</Badge>
                       ) : t.endSignal === "user_stopped" ? (
-                        <Badge label="stopped" variant="warn" />
+                        <Badge variant="warn">stopped</Badge>
                       ) : (
-                        <Badge label="ok" variant="ok" />
+                        <Badge variant="ok">ok</Badge>
                       )}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
-      </section>
-    </div>
-  );
-}
-
-function StatBox({
-  label,
-  value,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  highlight?: "warn" | "ok";
-}) {
-  return (
-    <div className="stat-box">
-      <div className="stat-label">{label}</div>
-      <div
-        className="stat-value"
-        style={{
-          color:
-            highlight === "warn"
-              ? "var(--amber)"
-              : highlight === "ok"
-                ? "var(--green)"
-                : undefined,
-        }}
-      >
-        {value}
       </div>
     </div>
   );
 }
 
 // ── Turn Detail / Waterfall ───────────────────────────────────────────────────
+// Tufte: waterfall only — 2 colors (LLM=blue, tool=amber), no co-located tables.
+// Click a bar to expand inline detail.
 
 function TurnDetailView({
   turnId,
   sessionId,
+  allTurns = [],
   onPromptView,
 }: {
   turnId: string;
   sessionId: string;
+  allTurns?: TurnRecord[];
   onPromptView: (llmCallId: string) => void;
 }) {
   const [turn, setTurn] = useState<TurnRecord | null>(null);
   const [llmCalls, setLlmCalls] = useState<LlmCallRecord[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCallRecord[]>([]);
-  const [expandedBlob, setExpandedBlob] = useState<string | null>(null);
+  const [selectedSpan, setSelectedSpan] = useState<string | null>(null);
   const [blobCache, setBlobCache] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -452,192 +678,190 @@ function TurnDetailView({
     api.toolCalls(turnId).then((d) => setToolCalls(d.toolCalls));
   }, [turnId, sessionId]);
 
-  async function showBlob(ref: string) {
-    if (expandedBlob === ref) {
-      setExpandedBlob(null);
-      return;
-    }
+  async function loadBlob(ref: string) {
     if (!blobCache[ref]) {
       const text = await api.blob(ref);
       setBlobCache((c) => ({ ...c, [ref]: text }));
     }
-    setExpandedBlob(ref);
   }
 
-  if (!turn) return <p className="muted">Loading…</p>;
+  if (!turn) {
+    return (
+      <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
 
-  const allItems: Array<{ type: "llm" | "tool"; id: string; name: string; latencyMs: number; color: string }> = [
-    ...llmCalls.map((c) => ({ type: "llm" as const, id: c.id, name: c.model, latencyMs: c.latencyMs, color: "#6366f1" })),
-    ...toolCalls.map((c) => ({ type: "tool" as const, id: c.id, name: c.name, latencyMs: c.latencyMs, color: kindColor(c.kind) })),
-  ];
-  const maxMs = allItems.reduce((m, x) => Math.max(m, x.latencyMs), 1);
+  type SpanItem = { type: "llm" | "tool"; id: string; name: string; latencyMs: number; record: LlmCallRecord | ToolCallRecord };
+  const spans: SpanItem[] = [
+    ...llmCalls.map((c) => ({ type: "llm" as const, id: c.id, name: c.model, latencyMs: c.latencyMs, record: c })),
+    ...toolCalls.map((c) => ({ type: "tool" as const, id: c.id, name: c.name, latencyMs: c.latencyMs, record: c })),
+  ].sort((a, b) => b.latencyMs - a.latencyMs);
+
+  const maxMs = spans.reduce((m, x) => Math.max(m, x.latencyMs), 1);
+
+  function SpanDetail({ span }: { span: SpanItem }) {
+    if (span.type === "llm") {
+      const c = span.record as LlmCallRecord;
+      return (
+        <div className="space-y-3 pt-2">
+          <MetricRow metrics={[
+            { label: "Latency", value: fmtMs(c.latencyMs) },
+            { label: "Prompt tok", value: fmt(c.promptTokens) },
+            { label: "Completion tok", value: fmt(c.completionTokens) },
+            { label: "Cache read", value: fmt(c.cacheReadTokens) },
+            { label: "Cost", value: fmtCost(c.cost) },
+          ]} />
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => onPromptView(c.id)}>
+              Prompt inspector
+            </Button>
+            {c.inputMessagesRef && (
+              <Button size="sm" variant="ghost" onClick={() => { void loadBlob(c.inputMessagesRef!); }}>
+                {blobCache[c.inputMessagesRef] ? "Hide messages" : "Show messages"}
+              </Button>
+            )}
+          </div>
+          {c.inputMessagesRef && blobCache[c.inputMessagesRef] && (
+            <pre className="body-pre">{blobCache[c.inputMessagesRef]}</pre>
+          )}
+        </div>
+      );
+    }
+    const tc = span.record as ToolCallRecord;
+    return (
+      <div className="space-y-3 pt-2">
+        <MetricRow metrics={[
+          { label: "Kind", value: tc.kind },
+          { label: "Latency", value: fmtMs(tc.latencyMs) },
+          { label: "Output tok est", value: fmt(tc.tokensOutEst) },
+          { label: "Status", value: tc.status ?? "—" },
+          ...(tc.server ? [{ label: "Server", value: tc.server }] : []),
+        ]} />
+        <div className="flex gap-2">
+          {tc.argsRef && (
+            <Button size="sm" variant="ghost" onClick={() => { void loadBlob(tc.argsRef!); }}>
+              {blobCache[tc.argsRef!] ? "Hide args" : "Show args"}
+            </Button>
+          )}
+          {tc.outputRef && (
+            <Button size="sm" variant="ghost" onClick={() => { void loadBlob(tc.outputRef!); }}>
+              {blobCache[tc.outputRef!] ? "Hide output" : "Show output"}
+            </Button>
+          )}
+        </div>
+        {tc.argsRef && blobCache[tc.argsRef] && <pre className="body-pre">{blobCache[tc.argsRef]}</pre>}
+        {tc.outputRef && blobCache[tc.outputRef] && <pre className="body-pre">{blobCache[tc.outputRef]}</pre>}
+      </div>
+    );
+  }
 
   return (
-    <div className="view">
-      <div className="view-header">
-        <div>
-          <h2>Turn {turn.idx + 1}</h2>
-          <code className="id-chip">{turn.id}</code>
+    <div className="space-y-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-0.5">
+          <h1 className="text-lg font-semibold">Turn {turn.idx + 1}</h1>
+          <code className="text-[11px] text-muted-foreground font-mono">{turn.id}</code>
         </div>
+        {allTurns.length > 1 && (
+          <div className="flex items-center gap-3 shrink-0 text-xs text-muted-foreground">
+            <span>{turn.idx + 1} / {allTurns.length}</span>
+            <span className="flex items-center gap-1">
+              <kbd className="rounded border border-border bg-secondary px-1 py-0.5 font-mono text-[10px]">k</kbd>
+              <span>prev</span>
+              <kbd className="rounded border border-border bg-secondary px-1 py-0.5 font-mono text-[10px]">j</kbd>
+              <span>next</span>
+            </span>
+          </div>
+        )}
       </div>
 
-      <div className="stats-strip">
-        <StatBox label="LLM calls" value={fmt(turn.llmRoundTrips)} />
-        <StatBox label="Prompt tok" value={fmt(turn.promptTokens)} />
-        <StatBox label="Completion tok" value={fmt(turn.completionTokens)} />
-        <StatBox label="Cache hit" value={fmtRatio(turn.promptTokens > 0 ? turn.cacheReadTokens / turn.promptTokens : 0)} />
-        <StatBox label="Cost" value={fmtCost(turn.cost)} />
-      </div>
+      <MetricRow metrics={[
+        { label: "Cost", value: fmtCost(turn.cost) },
+        { label: "Cache hit", value: fmtRatio(turn.promptTokens > 0 ? turn.cacheReadTokens / turn.promptTokens : 0) },
+        { label: "LLM calls", value: fmt(turn.llmRoundTrips) },
+        { label: "Prompt tok", value: fmt(turn.promptTokens) },
+        { label: "Completion tok", value: fmt(turn.completionTokens) },
+      ]} />
+      <Separator />
 
       {turn.userText && (
-        <section className="section">
-          <h3>User message</h3>
+        <div className="space-y-1.5">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">User</h2>
           <pre className="body-pre">{turn.userText}</pre>
-        </section>
+        </div>
       )}
 
       {turn.assistantText && (
-        <section className="section">
-          <h3>Assistant response</h3>
-          <pre className="body-pre">{turn.assistantText.slice(0, 2000)}{turn.assistantText.length > 2000 ? "\n…(truncated)" : ""}</pre>
-        </section>
+        <div className="space-y-1.5">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Assistant</h2>
+          <pre className="body-pre">
+            {turn.assistantText.slice(0, 2000)}
+            {turn.assistantText.length > 2000 ? "\n…(truncated)" : ""}
+          </pre>
+        </div>
       )}
 
-      {/* Waterfall */}
-      {allItems.length > 0 && (
-        <section className="section">
-          <h3>Span waterfall</h3>
-          <div className="waterfall">
-            {allItems.map((item) => (
-              <WaterfallBar
-                key={item.id}
-                label={item.name}
-                latencyMs={item.latencyMs}
-                maxMs={maxMs}
-                color={item.color}
-              />
-            ))}
+      {/* Waterfall — Tufte: 2 colors, no co-located tables */}
+      {spans.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Span waterfall — click to expand
+            </h2>
+            <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-sm bg-[hsl(var(--primary))]" /> LLM
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-sm bg-[hsl(var(--amber))]" /> Tool
+              </span>
+            </div>
           </div>
-        </section>
-      )}
-
-      {/* LLM calls */}
-      {llmCalls.length > 0 && (
-        <section className="section">
-          <h3>LLM calls ({llmCalls.length})</h3>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Model</th>
-                  <th>Latency</th>
-                  <th>Prompt tok</th>
-                  <th>Completion tok</th>
-                  <th>Cache read</th>
-                  <th>Cost</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {llmCalls.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.model}</td>
-                    <td>{fmtMs(c.latencyMs)}</td>
-                    <td>{fmt(c.promptTokens)}</td>
-                    <td>{fmt(c.completionTokens)}</td>
-                    <td>{fmt(c.cacheReadTokens)}</td>
-                    <td>{fmtCost(c.cost)}</td>
-                    <td>
-                      <button className="ghost small" onClick={() => onPromptView(c.id)}>
-                        Prompt inspector
-                      </button>
-                      {c.inputMessagesRef && (
-                        <button
-                          className="ghost small"
-                          style={{ marginLeft: 4 }}
-                          onClick={() => showBlob(c.inputMessagesRef!)}
-                        >
-                          {expandedBlob === c.inputMessagesRef ? "Hide" : "Messages"}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-1">
+            {spans.map((span) => {
+              const pct = Math.max(2, (span.latencyMs / maxMs) * 100);
+              const isSelected = selectedSpan === span.id;
+              return (
+                <div key={span.id} className="rounded-md overflow-hidden border border-transparent hover:border-border transition-colors">
+                  <div
+                    className="flex items-center gap-3 h-8 px-2 cursor-pointer"
+                    onClick={() => setSelectedSpan(isSelected ? null : span.id)}
+                  >
+                    <span className="w-40 shrink-0 text-[11px] text-muted-foreground truncate" title={span.name}>
+                      {span.name}
+                    </span>
+                    <div className="flex-1 h-3.5 bg-secondary rounded-sm overflow-hidden">
+                      <div
+                        className={cn(
+                          "h-full rounded-sm transition-all",
+                          span.type === "llm" ? "waterfall-bar-llm" : "waterfall-bar-tool"
+                        )}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="w-14 text-right text-[11px] text-muted-foreground tabular-nums shrink-0">
+                      {fmtMs(span.latencyMs)}
+                    </span>
+                    <ChevronRight className={cn("h-3 w-3 text-muted-foreground shrink-0 transition-transform", isSelected && "rotate-90")} />
+                  </div>
+                  {isSelected && (
+                    <div className="px-3 pb-3 bg-card border-t border-border">
+                      <SpanDetail span={span} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-          {expandedBlob && blobCache[expandedBlob] && (
-            <pre className="body-pre" style={{ marginTop: 8 }}>
-              {blobCache[expandedBlob]}
-            </pre>
-          )}
-        </section>
-      )}
-
-      {/* Tool calls */}
-      {toolCalls.length > 0 && (
-        <section className="section">
-          <h3>Tool calls ({toolCalls.length})</h3>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Kind</th>
-                  <th>Server/Skill</th>
-                  <th>Latency</th>
-                  <th>Output tok est</th>
-                  <th>Status</th>
-                  <th>Args/Output</th>
-                </tr>
-              </thead>
-              <tbody>
-                {toolCalls.map((tc) => (
-                  <tr key={tc.id}>
-                    <td>{tc.name}</td>
-                    <td><Badge label={tc.kind} variant="neutral" /></td>
-                    <td>{tc.server ?? tc.skill ?? "—"}</td>
-                    <td>{fmtMs(tc.latencyMs)}</td>
-                    <td>{fmt(tc.tokensOutEst)}</td>
-                    <td>{tc.status ?? "—"}</td>
-                    <td>
-                      {tc.argsRef && (
-                        <button className="ghost small" onClick={() => showBlob(tc.argsRef!)}>
-                          {expandedBlob === tc.argsRef ? "Hide" : "Args"}
-                        </button>
-                      )}
-                      {tc.outputRef && (
-                        <button
-                          className="ghost small"
-                          style={{ marginLeft: 4 }}
-                          onClick={() => showBlob(tc.outputRef!)}
-                        >
-                          {expandedBlob === tc.outputRef ? "Hide" : "Output"}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {expandedBlob && blobCache[expandedBlob] && (
-            <pre className="body-pre" style={{ marginTop: 8 }}>
-              {blobCache[expandedBlob]}
-            </pre>
-          )}
-        </section>
+        </div>
       )}
     </div>
   );
 }
 
-function kindColor(kind: string): string {
-  const m: Record<string, string> = { mcp: "#8b5cf6", skill: "#10b981", builtin: "#f59e0b" };
-  return m[kind] ?? "#4b5563";
-}
-
-// ── Cache Panel ───────────────────────────────────────────────────────────────
+// ── Cache Panel — 100% normalized bars + aggregate reference line ─────────────
 
 function CachePanelView({ sessionId }: { sessionId: string }) {
   const [turns, setTurns] = useState<TurnRecord[]>([]);
@@ -648,225 +872,272 @@ function CachePanelView({ sessionId }: { sessionId: string }) {
     api.turns(sessionId).then((d) => setTurns(d.turns));
   }, [sessionId]);
 
-  if (!session) return <p className="muted">Loading…</p>;
+  if (!session) {
+    return (
+      <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
 
   const sessionHitRatio = cacheRatio(session);
-
-  // Per-turn hit ratio series
   const turnSeries = turns.map((t) => ({
     idx: t.idx + 1,
+    id: t.id,
     ratio: t.promptTokens > 0 ? t.cacheReadTokens / t.promptTokens : 0,
-    cacheRead: t.cacheReadTokens,
-    cacheWrite: t.cacheWriteTokens,
     prompt: t.promptTokens,
   }));
 
-  const maxTokens = Math.max(...turnSeries.map((t) => t.prompt), 1);
+  const CHART_H = 120;
+  const padL = 28, padR = 8, padTop = 8, labelH = 16;
+  const n = turnSeries.length || 1;
+  const colW = 40;
+  const totalW = n * colW + padL + padR;
+  const totalH = CHART_H + padTop + labelH;
 
   return (
-    <div className="view">
-      <div className="view-header">
-        <h2>Cache Panel</h2>
-        <span className="muted">Session: {sessionId.slice(0, 16)}…</span>
-      </div>
+    <div className="space-y-5">
+      <h1 className="text-lg font-semibold">Cache Detail</h1>
 
-      <div className="stats-strip">
-        <StatBox label="Overall hit ratio" value={fmtRatio(sessionHitRatio)} highlight={sessionHitRatio > 0.5 ? "ok" : "warn"} />
-        <StatBox label="Total cache-read tok" value={fmt(session.cacheReadTokens)} />
-        <StatBox label="Total cache-write tok" value={fmt(session.cacheWriteTokens)} />
-        <StatBox label="Total prompt tok" value={fmt(session.promptTokens)} />
-      </div>
+      <MetricRow metrics={[
+        { label: "Overall hit ratio", value: fmtRatio(sessionHitRatio), highlight: sessionHitRatio > 0.5 ? "ok" : "warn" },
+        { label: "Cache-read tok", value: fmt(session.cacheReadTokens) },
+        { label: "Cache-write tok", value: fmt(session.cacheWriteTokens) },
+      ]} />
+      <Separator />
 
-      {/* Bar chart: cache hit ratio per turn */}
-      <section className="section">
-        <h3>Cache hit ratio per turn</h3>
-        <div className="cache-chart">
-          {turnSeries.map((t) => (
-            <div key={t.idx} className="cache-bar-col">
-              <div className="cache-bar-wrap">
-                {/* stacked bar: cache_read / prompt */}
-                <div
-                  className="cache-bar-total"
-                  style={{ height: `${Math.max(4, (t.prompt / maxTokens) * 100)}%` }}
-                  title={`Prompt: ${fmt(t.prompt)} tok`}
-                >
-                  <div
-                    className="cache-bar-read"
-                    style={{ height: `${t.ratio * 100}%` }}
-                    title={`Cache read: ${fmt(t.cacheRead)} tok (${fmtRatio(t.ratio)})`}
+      {/* 100% normalized bars — Tufte: each bar same height, fraction is the signal */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Cache hit fraction per turn (normalized)
+          </h2>
+          <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <span className="inline-block w-2 h-2 rounded-sm bg-[hsl(var(--green))]" /> cache read
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block w-2 h-2 rounded-sm bg-secondary" /> prompt total
+            </span>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <svg
+            viewBox={`0 0 ${totalW} ${totalH}`}
+            className="w-full"
+            style={{ minWidth: Math.max(200, n * 30), height: totalH * 1.5 }}
+          >
+            {/* Gridlines at 25%, 50%, 75% */}
+            {[0.25, 0.5, 0.75].map((frac) => {
+              const y = padTop + CHART_H * (1 - frac);
+              return (
+                <g key={frac}>
+                  <line x1={padL} y1={y} x2={totalW - padR} y2={y} stroke="hsl(var(--border))" strokeWidth={0.5} />
+                  <text x={padL - 2} y={y + 2} textAnchor="end" fontSize={6} fill="hsl(var(--muted-foreground))">
+                    {Math.round(frac * 100)}%
+                  </text>
+                </g>
+              );
+            })}
+
+            {/* Session-average reference line */}
+            <line
+              x1={padL}
+              y1={padTop + CHART_H * (1 - sessionHitRatio)}
+              x2={totalW - padR}
+              y2={padTop + CHART_H * (1 - sessionHitRatio)}
+              stroke="hsl(var(--amber))"
+              strokeWidth={1}
+              strokeDasharray="4 2"
+            />
+            <text
+              x={totalW - padR}
+              y={padTop + CHART_H * (1 - sessionHitRatio) - 2}
+              textAnchor="end"
+              fontSize={6}
+              fill="hsl(var(--amber))"
+            >
+              avg {fmtRatio(sessionHitRatio)}
+            </text>
+
+            {/* Normalized bars */}
+            {turnSeries.map((t, i) => {
+              const x = padL + i * colW + colW * 0.15;
+              const bw = colW * 0.7;
+              const fullH = CHART_H;
+              const hitH = fullH * t.ratio;
+              return (
+                <g key={t.id}>
+                  {/* Full bar (prompt total) */}
+                  <rect x={x} y={padTop} width={bw} height={fullH} rx={2} fill="hsl(var(--secondary))" />
+                  {/* Cache read portion */}
+                  <rect
+                    x={x}
+                    y={padTop + fullH - hitH}
+                    width={bw}
+                    height={Math.max(hitH, 1)}
+                    rx={2}
+                    fill="hsl(var(--green))"
+                    opacity={0.85}
                   />
-                </div>
-              </div>
-              <span className="cache-bar-label">{t.idx}</span>
-            </div>
-          ))}
+                  {/* Turn label */}
+                  <text x={x + bw / 2} y={totalH - 2} textAnchor="middle" fontSize={7} fill="hsl(var(--muted-foreground))">
+                    {t.idx}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
         </div>
-        <div className="cache-legend">
-          <span style={{ color: "var(--green)" }}>■ Cache read</span>
-          <span style={{ color: "var(--muted-color)", marginLeft: 12 }}>■ Prompt total</span>
-        </div>
-      </section>
-
-      <section className="section">
-        <h3>Turn breakdown</h3>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Prompt tok</th>
-                <th>Cache read</th>
-                <th>Cache write</th>
-                <th>Hit ratio</th>
-              </tr>
-            </thead>
-            <tbody>
-              {turnSeries.map((t) => (
-                <tr key={t.idx}>
-                  <td>{t.idx}</td>
-                  <td>{fmt(t.prompt)}</td>
-                  <td>{fmt(t.cacheRead)}</td>
-                  <td>{fmt(t.cacheWrite)}</td>
-                  <td>
-                    <span style={{ color: t.ratio > 0.5 ? "var(--green)" : "var(--amber)" }}>
-                      {fmtRatio(t.ratio)}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      </div>
     </div>
   );
 }
 
-// ── System Prompt Inspector ───────────────────────────────────────────────────
+// ── Prompt Inspector — treemap strip only (no redundant table) ────────────────
 
-function PromptInspectorView({
-  llmCallId,
-  sessionId,
-}: {
-  llmCallId: string;
-  sessionId: string;
-}) {
+const SEG_COLORS: Record<string, string> = {
+  system: "hsl(var(--primary))",
+  tool: "hsl(var(--amber))",
+  mcp: "hsl(var(--purple))",
+  skill: "hsl(var(--green))",
+  user: "hsl(var(--muted-foreground))",
+  assistant: "hsl(258 90% 60%)",
+  instructions: "hsl(var(--primary))",
+};
+function segColor(k: string) { return SEG_COLORS[k] ?? "hsl(var(--muted-foreground))"; }
+
+function PromptInspectorView({ llmCallId, sessionId }: { llmCallId: string; sessionId: string }) {
   const [segments, setSegments] = useState<PromptSegmentRecord[]>([]);
   const [messages, setMessages] = useState<string | null>(null);
   const [llmCall, setLlmCall] = useState<LlmCallRecord | null>(null);
+  const [selectedSeg, setSelectedSeg] = useState<number | null>(null);
 
   useEffect(() => {
     api.segments(llmCallId).then((d) => setSegments(d.segments));
-    // fetch llm call to get the inputMessagesRef
     api.llmCalls(sessionId).then((d) => {
       const c = d.llmCalls.find((x) => x.id === llmCallId);
       if (c) {
         setLlmCall(c);
-        if (c.inputMessagesRef) {
-          api.blob(c.inputMessagesRef).then(setMessages);
-        }
+        if (c.inputMessagesRef) api.blob(c.inputMessagesRef).then(setMessages);
       }
     });
   }, [llmCallId, sessionId]);
 
-  const totalTokens = segments.reduce((s, x) => s + x.tokenEst, 0);
   const totalChars = segments.reduce((s, x) => s + x.charLen, 0);
+  const totalTokens = segments.reduce((s, x) => s + x.tokenEst, 0);
+
+  if (!llmCall) {
+    return (
+      <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
 
   return (
-    <div className="view">
-      <div className="view-header">
-        <h2>System Prompt Inspector</h2>
-        <code className="id-chip">{llmCallId}</code>
+    <div className="space-y-5">
+      <div className="space-y-0.5">
+        <h1 className="text-lg font-semibold">Prompt Inspector</h1>
+        <code className="text-[11px] text-muted-foreground font-mono">{llmCallId}</code>
       </div>
 
-      {llmCall && (
-        <div className="stats-strip">
-          <StatBox label="Model" value={llmCall.model} />
-          <StatBox label="Prompt tok" value={fmt(llmCall.promptTokens)} />
-          <StatBox label="Cache read tok" value={fmt(llmCall.cacheReadTokens)} />
-          <StatBox label="Segments" value={fmt(segments.length)} />
-          <StatBox label="Est. segment tok" value={fmt(totalTokens)} />
-        </div>
-      )}
+      <MetricRow metrics={[
+        { label: "Model", value: llmCall.model },
+        { label: "Prompt tok", value: fmt(llmCall.promptTokens) },
+        { label: "Cache read", value: fmt(llmCall.cacheReadTokens) },
+        { label: "Segments", value: fmt(segments.length) },
+        { label: "Est. segment tok", value: fmt(totalTokens) },
+      ]} />
+      <Separator />
 
-      {segments.length > 0 && (
-        <section className="section">
-          <h3>Prompt composition</h3>
-          {/* Treemap (simplified proportional strip) */}
-          <div className="treemap-strip">
+      {segments.length > 0 ? (
+        <div className="space-y-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Prompt composition — click a segment
+          </h2>
+
+          {/* Treemap strip */}
+          <div className="flex h-7 rounded-md overflow-hidden border border-border gap-px">
             {segments.map((seg, i) => {
-              const pct = totalChars > 0 ? (seg.charLen / totalChars) * 100 : 0;
+              const pct = totalChars > 0 ? Math.max(0.5, (seg.charLen / totalChars) * 100) : 0;
               return (
-                <div
-                  key={i}
-                  className="treemap-block"
-                  style={{ width: `${Math.max(0.5, pct)}%`, background: segColor(seg.sourceKind) }}
-                  title={`${seg.sourceName} (${seg.sourceKind}): ${fmt(seg.charLen)} chars, ~${fmt(seg.tokenEst)} tokens`}
-                />
+                <TooltipProvider key={i}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div
+                        className={cn(
+                          "h-full cursor-pointer transition-opacity hover:opacity-75",
+                          selectedSeg === i && "ring-2 ring-ring ring-inset"
+                        )}
+                        style={{ width: `${pct}%`, background: segColor(seg.sourceKind) }}
+                        onClick={() => setSelectedSeg(selectedSeg === i ? null : i)}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="font-medium">{seg.sourceName}</p>
+                      <p className="text-muted-foreground">{seg.sourceKind} · ~{fmt(seg.tokenEst)} tok · {fmt(seg.charLen)} chars</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               );
             })}
           </div>
+
           {/* Legend */}
-          <div className="treemap-legend">
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
             {segments.map((seg, i) => (
-              <span key={i} className="legend-item">
-                <span style={{ color: segColor(seg.sourceKind) }}>■</span>{" "}
-                {seg.sourceName}{" "}
-                <span className="muted">~{fmt(seg.tokenEst)} tok</span>
-                {!seg.isStatic && <Badge label="volatile" variant="muted" />}
-              </span>
+              <button
+                key={i}
+                className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => setSelectedSeg(selectedSeg === i ? null : i)}
+              >
+                <span className="inline-block w-2 h-2 rounded-sm" style={{ background: segColor(seg.sourceKind) }} />
+                {seg.sourceName}
+                <span className="text-[10px]">~{fmt(seg.tokenEst)}t</span>
+                {!seg.isStatic && <Badge variant="warn" className="text-[9px] px-1">volatile</Badge>}
+              </button>
             ))}
           </div>
 
-          {/* Segment detail table */}
-          <div className="table-wrap" style={{ marginTop: 12 }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Kind</th>
-                  <th>Name</th>
-                  <th>Chars</th>
-                  <th>~Tokens</th>
-                  <th>Static?</th>
-                  <th>SHA256</th>
-                </tr>
-              </thead>
-              <tbody>
-                {segments.map((seg, i) => (
-                  <tr key={i}>
-                    <td>{seg.ord}</td>
-                    <td><span style={{ color: segColor(seg.sourceKind) }}>{seg.sourceKind}</span></td>
-                    <td>{seg.sourceName}</td>
-                    <td>{fmt(seg.charLen)}</td>
-                    <td>{fmt(seg.tokenEst)}</td>
-                    <td>{seg.isStatic ? "✓" : "—"}</td>
-                    <td><code style={{ fontSize: 11 }}>{seg.sha256.slice(0, 12)}…</code></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
-      {segments.length === 0 && messages && (
-        <section className="section">
-          <p className="muted">
-            No segment data available — enriched capture (§4.1) is not active. Showing raw messages:
+          {/* Selected segment detail — replaces always-on table */}
+          {selectedSeg !== null && segments[selectedSeg] && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: segColor(segments[selectedSeg].sourceKind) }} />
+                  {segments[selectedSeg].sourceName}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <MetricRow metrics={[
+                  { label: "Kind", value: segments[selectedSeg].sourceKind },
+                  { label: "Characters", value: fmt(segments[selectedSeg].charLen) },
+                  { label: "Est. tokens", value: fmt(segments[selectedSeg].tokenEst) },
+                  { label: "Static", value: segments[selectedSeg].isStatic ? "yes" : "no" },
+                ]} />
+                <p className="mt-2 text-[11px] text-muted-foreground font-mono">
+                  SHA256: {segments[selectedSeg].sha256.slice(0, 20)}…
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      ) : messages ? (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            No segment data — enriched capture (§4.1) not active. Raw messages:
           </p>
           <pre className="body-pre">{messages.slice(0, 4000)}</pre>
-        </section>
-      )}
-
-      {!segments.length && !messages && (
-        <p className="muted">No prompt data available for this LLM call.</p>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">No prompt data for this LLM call.</p>
       )}
     </div>
   );
 }
 
-// ── Compare View ──────────────────────────────────────────────────────────────
+// ── Compare — deltas ranked by magnitude, not flat grid ───────────────────────
 
 function CompareView() {
   const [result, setResult] = useState<CompareResult | null>(null);
@@ -877,83 +1148,163 @@ function CompareView() {
     api.compare().then((d) => setResult(d.compare)).catch(console.error).finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <p className="muted">Loading…</p>;
-  if (!result || !result.metrics.length) {
+  if (loading) {
     return (
-      <div className="view">
-        <h2>Cross-Harness Compare</h2>
-        <p className="muted">No data. Ingest traces from multiple harnesses first.</p>
+      <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
+  if (!result?.metrics.length) {
+    return (
+      <div className="space-y-2">
+        <h1 className="text-lg font-semibold">Cross-Harness Compare</h1>
+        <p className="text-sm text-muted-foreground">
+          No data. Ingest traces from multiple harnesses first.
+        </p>
+      </div>
+    );
+  }
+
+  // Sort insights by severity; sort pairwise deltas by absolute cost delta magnitude
+  const topInsights = [...result.insights].sort((a, b) => {
+    const order = { critical: 0, warn: 1, info: 2 };
+    return order[a.severity] - order[b.severity];
+  });
+  const sortedDeltas = [...result.pairwiseDeltas].sort(
+    (a, b) => Math.abs(b.costPerTurnDelta.delta) - Math.abs(a.costPerTurnDelta.delta)
+  );
+
+  function DeltaRow({
+    label,
+    delta,
+    ciLow,
+    ciHigh,
+    format,
+    lowerIsBetter,
+  }: {
+    label: string;
+    delta: number;
+    ciLow: number;
+    ciHigh: number;
+    format: (v: number) => string;
+    lowerIsBetter: boolean;
+  }) {
+    const isImprovement = lowerIsBetter ? delta < 0 : delta > 0;
+    const colorClass = isImprovement
+      ? "text-[hsl(var(--green))]"
+      : delta === 0 ? "text-muted-foreground"
+      : "text-[hsl(var(--amber))]";
+    return (
+      <div className="flex items-center justify-between py-2 border-b border-border last:border-0">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <div className="text-right">
+          <span className={cn("text-sm font-semibold tabular-nums", colorClass)}>
+            {delta >= 0 ? "+" : ""}{format(delta)}
+          </span>
+          <span className="ml-2 text-[10px] text-muted-foreground tabular-nums">
+            95% CI [{format(ciLow)}, {format(ciHigh)}]
+          </span>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="view">
-      <div className="view-header">
-        <h2>Cross-Harness Compare</h2>
-        <span className="muted">Bootstrap 95% CIs</span>
+    <div className="space-y-5">
+      <h1 className="text-lg font-semibold">Cross-Harness Compare</h1>
+
+      {topInsights.length > 0 && (
+        <div className="space-y-2">
+          {topInsights.map((ins) => <InsightCard key={ins.id} insight={ins} />)}
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Per-harness metrics
+        </h2>
+        <div className="rounded-lg border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Harness</TableHead>
+                <TableHead>Sessions</TableHead>
+                <TableHead>Cache hit %</TableHead>
+                <TableHead>Tokens/turn</TableHead>
+                <TableHead>Cost/turn</TableHead>
+                <TableHead>Latency/turn</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {result.metrics.map((m) => (
+                <TableRow key={m.harness}>
+                  <TableCell>
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className="inline-block w-0.5 h-4 rounded-full shrink-0"
+                        style={{
+                          background:
+                            m.harness === "opencode" ? "hsl(var(--primary))"
+                            : m.harness === "vscode" ? "hsl(var(--purple))"
+                            : "hsl(var(--muted-foreground))",
+                        }}
+                      />
+                      {m.harness}
+                    </span>
+                  </TableCell>
+                  <TableCell className="tabular-nums">{fmt(m.sessionCount)}</TableCell>
+                  <TableCell>
+                    <span className={cn(
+                      "tabular-nums",
+                      m.meanCacheHitRatio > 0.5 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--amber))]"
+                    )}>
+                      {fmtRatio(m.meanCacheHitRatio)}
+                    </span>
+                  </TableCell>
+                  <TableCell className="tabular-nums text-muted-foreground">{fmt(m.meanTokensPerTurn, 0)}</TableCell>
+                  <TableCell className="tabular-nums font-medium">{fmtCost(m.meanCostPerTurn)}</TableCell>
+                  <TableCell className="tabular-nums text-muted-foreground">{fmtMs(m.meanLatencyMsPerTurn)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
-      <section className="section">
-        <h3>Per-harness metrics</h3>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Harness</th>
-                <th>Sessions</th>
-                <th>Turns/session</th>
-                <th>Cache hit %</th>
-                <th>Tokens/turn</th>
-                <th>Cost/turn</th>
-                <th>Latency/turn</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.metrics.map((m) => (
-                <tr key={m.harness}>
-                  <td><Badge label={m.harness} variant="neutral" /></td>
-                  <td>{fmt(m.sessionCount)}</td>
-                  <td>{fmt(m.meanTurnsPerSession, 1)}</td>
-                  <td>{fmtRatio(m.meanCacheHitRatio)}</td>
-                  <td>{fmt(m.meanTokensPerTurn, 0)}</td>
-                  <td>{fmtCost(m.meanCostPerTurn)}</td>
-                  <td>{fmtMs(m.meanLatencyMsPerTurn)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {result.pairwiseDeltas.length > 0 && (
-        <section className="section">
-          <h3>Pairwise deltas</h3>
-          {result.pairwiseDeltas.map((d) => (
-            <div key={`${d.from}-${d.to}`} className="compare-pair">
-              <div className="compare-pair-header">
-                <Badge label={d.from} variant="neutral" />
-                <span className="muted" style={{ margin: "0 6px" }}>vs</span>
-                <Badge label={d.to} variant="neutral" />
-              </div>
-              <div className="delta-grid">
-                <DeltaCard
-                  label="Cost/turn"
+      {/* Sorted pairwise deltas — biggest impact first */}
+      {sortedDeltas.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Pairwise deltas — ranked by cost impact
+          </h2>
+          {sortedDeltas.map((d) => (
+            <Card key={`${d.from}-${d.to}`}>
+              <CardHeader className="pb-0">
+                <CardTitle className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                  <span className="text-foreground">{d.from}</span>
+                  <span>vs</span>
+                  <span className="text-foreground">{d.to}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <DeltaRow
+                  label="Cost / turn"
                   delta={d.costPerTurnDelta.delta}
                   ciLow={d.costPerTurnDelta.ciLow}
                   ciHigh={d.costPerTurnDelta.ciHigh}
                   format={fmtCost}
                   lowerIsBetter
                 />
-                <DeltaCard
-                  label="Tokens/turn"
+                <DeltaRow
+                  label="Tokens / turn"
                   delta={d.tokensPerTurnDelta.delta}
                   ciLow={d.tokensPerTurnDelta.ciLow}
                   ciHigh={d.tokensPerTurnDelta.ciHigh}
                   format={(v) => fmt(v, 0)}
                   lowerIsBetter
                 />
-                <DeltaCard
+                <DeltaRow
                   label="Cache hit %"
                   delta={d.cacheHitRatioDelta.delta}
                   ciLow={d.cacheHitRatioDelta.ciLow}
@@ -961,80 +1312,47 @@ function CompareView() {
                   format={fmtRatio}
                   lowerIsBetter={false}
                 />
-              </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Live Tail — explicit mode, not persistent sidebar ─────────────────────────
+
+function LiveTailView({ onClose }: { onClose: () => void }) {
+  const events = useLiveTail(true);
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-[hsl(var(--green))] live-pulse" />
+          Live tail
+        </div>
+        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose}>
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <ScrollArea className="flex-1">
+        <div className="px-4 py-2 space-y-1">
+          {events.length === 0 && (
+            <p className="text-xs text-muted-foreground py-4">Waiting for events…</p>
+          )}
+          {events.map((e, i) => (
+            <div key={i} className="flex items-center gap-2 py-1.5 border-b border-border/50 last:border-0">
+              <Badge variant="neutral" className="text-[10px] shrink-0">{e.type}</Badge>
+              <code className="text-[10px] text-muted-foreground truncate">
+                {(e.data as Record<string, unknown>).id
+                  ? String((e.data as Record<string, unknown>).id).slice(0, 24)
+                  : "—"}
+              </code>
             </div>
           ))}
-        </section>
-      )}
-
-      {result.insights.length > 0 && (
-        <section className="section">
-          <h3>Insights</h3>
-          <div className="insight-list">
-            {result.insights.map((ins) => (
-              <InsightCard key={ins.id} insight={ins} />
-            ))}
-          </div>
-        </section>
-      )}
-    </div>
-  );
-}
-
-function DeltaCard({
-  label,
-  delta,
-  ciLow,
-  ciHigh,
-  format,
-  lowerIsBetter,
-}: {
-  label: string;
-  delta: number;
-  ciLow: number;
-  ciHigh: number;
-  format: (v: number) => string;
-  lowerIsBetter: boolean;
-}) {
-  const isImprovement = lowerIsBetter ? delta < 0 : delta > 0;
-  const color = isImprovement ? "var(--green)" : delta === 0 ? "inherit" : "var(--amber)";
-  return (
-    <div className="delta-card">
-      <div className="delta-label">{label}</div>
-      <div className="delta-value" style={{ color }}>
-        {delta >= 0 ? "+" : ""}{format(delta)}
-      </div>
-      <div className="delta-ci muted">
-        95% CI [{format(ciLow)}, {format(ciHigh)}]
-      </div>
-    </div>
-  );
-}
-
-// ── Live Tail ─────────────────────────────────────────────────────────────────
-
-function LiveTailPanel({ enabled }: { enabled: boolean }) {
-  const events = useLiveTail(enabled);
-  if (!enabled) return null;
-  return (
-    <div className="live-tail">
-      <div className="live-tail-header">
-        <span className="live-dot" />
-        Live tail
-      </div>
-      <div className="live-tail-events">
-        {events.length === 0 && <p className="muted">Waiting for events…</p>}
-        {events.map((e, i) => (
-          <div key={i} className="live-event">
-            <Badge label={e.type} variant="neutral" />
-            <code className="live-event-id">
-              {(e.data as Record<string, unknown>).id
-                ? String((e.data as Record<string, unknown>).id).slice(0, 20)
-                : "—"}
-            </code>
-          </div>
-        ))}
-      </div>
+        </div>
+      </ScrollArea>
     </div>
   );
 }
@@ -1042,9 +1360,9 @@ function LiveTailPanel({ enabled }: { enabled: boolean }) {
 // ── Omnibar ───────────────────────────────────────────────────────────────────
 
 const STATIC_COMMANDS = [
-  { label: "Go to Sessions", action: "sessions" },
-  { label: "Cross-Harness Compare", action: "compare" },
-  { label: "Toggle live tail", action: "live-tail" },
+  { label: "Sessions", action: "sessions", icon: LayoutDashboard },
+  { label: "Cross-Harness Compare", action: "compare", icon: GitCompare },
+  { label: "Live tail", action: "live-tail", icon: Radio },
 ];
 
 function Omnibar({
@@ -1074,21 +1392,23 @@ function Omnibar({
     const q = query.toLowerCase();
     const cmds = STATIC_COMMANDS.filter((c) => c.label.toLowerCase().includes(q));
     const sess = sessions
-      .filter(
-        (s) =>
-          s.id.toLowerCase().includes(q) ||
-          (s.agent ?? "").toLowerCase().includes(q) ||
-          (s.model ?? "").toLowerCase().includes(q)
+      .filter((s) =>
+        s.id.toLowerCase().includes(q) ||
+        (s.agent ?? "").toLowerCase().includes(q) ||
+        (s.model ?? "").toLowerCase().includes(q)
       )
       .slice(0, 8)
       .map((s) => ({
-        label: `Session: ${s.agent ?? s.id.slice(0, 8)} — ${s.model ?? "?"}`,
+        label: `${s.agent ?? s.id.slice(0, 8)} — ${s.model ?? "?"}`,
+        sublabel: ago(s.startedAt),
         action: `session:${s.id}`,
+        icon: LayoutDashboard,
       }));
-    return [...cmds, ...sess];
+    return [
+      ...cmds.map((c) => ({ ...c, sublabel: "command", icon: c.icon })),
+      ...sess,
+    ];
   }, [query, sessions]);
-
-  if (!open) return null;
 
   function select(action: string) {
     if (action === "sessions") onNavigate({ page: "sessions" });
@@ -1099,28 +1419,47 @@ function Omnibar({
   }
 
   return (
-    <div className="omnibar-backdrop" onClick={onClose}>
-      <div className="omnibar" onClick={(e) => e.stopPropagation()}>
-        <input
-          ref={inputRef}
-          placeholder="Search sessions, commands…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && items[0]) select(items[0].action);
-            if (e.key === "Escape") onClose();
-          }}
-        />
-        <ul>
-          {items.map((item) => (
-            <li key={item.action} onClick={() => select(item.action)}>
-              {item.label}
-            </li>
-          ))}
-          {!items.length && <li className="muted">No results</li>}
-        </ul>
-      </div>
-    </div>
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="p-0 gap-0 overflow-hidden max-w-xl">
+        <div className="flex items-center gap-3 px-4 border-b border-border">
+          <Command className="h-4 w-4 text-muted-foreground shrink-0" />
+          <input
+            ref={inputRef}
+            className="flex-1 py-4 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+            placeholder="Search sessions, go to view…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && items[0]) select(items[0].action);
+              if (e.key === "Escape") onClose();
+            }}
+          />
+        </div>
+        <div className="max-h-80 overflow-y-auto">
+          {items.length === 0 && (
+            <p className="px-4 py-6 text-center text-xs text-muted-foreground">No results</p>
+          )}
+          {items.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.action}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-accent transition-colors text-sm"
+                onClick={() => select(item.action)}
+              >
+                <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-foreground">{item.label}</span>
+                  {item.sublabel && (
+                    <span className="ml-2 text-xs text-muted-foreground">{item.sublabel}</span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1138,25 +1477,27 @@ function Breadcrumb({
   const crumbs: { label: string; view: View }[] = [
     { label: "Sessions", view: { page: "sessions" } },
   ];
-
   if (view.page === "session") crumbs.push({ label: view.id.slice(0, 10) + "…", view });
   if (view.page === "turn") {
     const prev = history.find((h) => h.page === "session") as ({ page: "session"; id: string } | undefined);
-    if (prev) crumbs.push({ label: `Session`, view: prev });
-    crumbs.push({ label: "Turn " + view.id.slice(0, 8), view });
+    if (prev) crumbs.push({ label: "Session", view: prev });
+    crumbs.push({ label: `Turn ${view.id.slice(0, 6)}`, view });
   }
-  if (view.page === "cache") crumbs.push({ label: "Cache", view });
+  if (view.page === "cache") crumbs.push({ label: "Cache detail", view });
   if (view.page === "prompt") crumbs.push({ label: "Prompt Inspector", view });
   if (view.page === "compare") crumbs.push({ label: "Compare", view });
-  if (view.page === "rightsizing") crumbs.push({ label: "Right-sizing", view });
 
   return (
-    <nav className="breadcrumb">
+    <nav className="flex items-center gap-1 mb-5 text-xs text-muted-foreground">
       {crumbs.map((c, i) => (
-        <span key={i}>
-          {i > 0 && <span className="bc-sep">›</span>}
+        <span key={i} className="flex items-center gap-1">
+          {i > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground/50" />}
           <span
-            className={`bc-item${i === crumbs.length - 1 ? " bc-active" : " bc-link"}`}
+            className={cn(
+              i === crumbs.length - 1
+                ? "text-foreground"
+                : "cursor-pointer hover:text-foreground transition-colors"
+            )}
             onClick={() => i < crumbs.length - 1 && onNavigate(c.view)}
           >
             {c.label}
@@ -1167,76 +1508,181 @@ function Breadcrumb({
   );
 }
 
+// ── Hash routing ─────────────────────────────────────────────────────────────
+
+function viewToHash(v: View): string {
+  switch (v.page) {
+    case "sessions": return "#/sessions";
+    case "session":  return `#/sessions/${v.id}`;
+    case "turn":     return `#/sessions/${v.sessionId}/turns/${v.id}`;
+    case "cache":    return `#/sessions/${v.sessionId}/cache`;
+    case "prompt":   return `#/sessions/${v.sessionId}/prompt/${v.llmCallId}`;
+    case "compare":  return "#/compare";
+  }
+}
+
+function hashToView(hash: string): View {
+  const h = hash.replace(/^#/, "");
+  const m = (pattern: RegExp) => h.match(pattern);
+  let match: RegExpMatchArray | null;
+  if ((match = m(/^\/sessions\/([^/]+)\/turns\/([^/]+)$/)))
+    return { page: "turn", sessionId: match[1], id: match[2] };
+  if ((match = m(/^\/sessions\/([^/]+)\/cache$/)))
+    return { page: "cache", sessionId: match[1] };
+  if ((match = m(/^\/sessions\/([^/]+)\/prompt\/([^/]+)$/)))
+    return { page: "prompt", sessionId: match[1], llmCallId: match[2] };
+  if ((match = m(/^\/sessions\/([^/]+)$/)))
+    return { page: "session", id: match[1] };
+  if (h === "/compare")
+    return { page: "compare" };
+  return { page: "sessions" };
+}
+
 // ── App shell ─────────────────────────────────────────────────────────────────
 
 export function App() {
-  const [view, setView] = useState<View>({ page: "sessions" });
+  const [view, setView] = useState<View>(() => hashToView(window.location.hash));
   const [history, setHistory] = useState<View[]>([]);
   const [omnibarOpen, setOmnibarOpen] = useState(false);
-  const [liveTailEnabled, setLiveTailEnabled] = useState(false);
+  const [liveTailOpen, setLiveTailOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  // Ordered turn list kept warm for j/k navigation — populated whenever we're
+  // anywhere inside a session (turn, cache, prompt pages).
+  const [sessionTurns, setSessionTurns] = useState<TurnRecord[]>([]);
+  // Stable refs so the keydown listener (registered once) reads fresh values.
+  const viewRef = useRef<View>({ page: "sessions" });
+  const sessionTurnsRef = useRef<TurnRecord[]>([]);
+  const navigateRef = useRef<(v: View) => void>(() => {});
+
+  // Sync URL → view on browser back/forward
+  useEffect(() => {
+    const onPop = () => setView(hashToView(window.location.hash));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   useEffect(() => {
     api.sessions().then((d) => setSessions(d.sessions)).catch(console.error);
   }, []);
 
+  // Keep sessionTurns warm whenever we land on any session-scoped page
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
+    const sid =
+      view.page === "turn"    ? view.sessionId :
+      view.page === "session" ? view.id :
+      view.page === "cache"   ? view.sessionId :
+      view.page === "prompt"  ? view.sessionId : null;
+    if (sid) {
+      api.turns(sid)
+        .then((d) => {
+          setSessionTurns(d.turns);
+          sessionTurnsRef.current = d.turns;
+        })
+        .catch(console.error);
+    }
+    viewRef.current = view;
+  }, [view]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Skip when typing in an input or the omnibar
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) return;
+
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setOmnibarOpen((v) => !v);
+        return;
       }
-      if (e.key === "Escape") setOmnibarOpen(false);
+      if (e.key === "Escape") { setOmnibarOpen(false); return; }
+
+      // j = next turn  /  k = prev turn
+      if (e.key === "j" || e.key === "k") {
+        const current = viewRef.current;
+        if (current.page !== "turn") return;
+        const turns = sessionTurnsRef.current;
+        const idx = turns.findIndex((t) => t.id === current.id);
+        if (idx === -1) return;
+        const nextIdx = e.key === "j" ? idx + 1 : idx - 1;
+        if (nextIdx < 0 || nextIdx >= turns.length) return;
+        const nextTurn = turns[nextIdx];
+        navigateRef.current({ page: "turn", id: nextTurn.id, sessionId: current.sessionId });
+      }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   function navigate(next: View) {
     setHistory((h) => [...h, view]);
+    window.history.pushState(null, "", viewToHash(next));
     setView(next);
-    setSessions((prev) => {
-      if (next.page === "sessions") {
-        // refresh
-        api.sessions().then((d) => setSessions(d.sessions)).catch(console.error);
-      }
-      return prev;
-    });
+    if (next.page === "sessions") {
+      api.sessions().then((d) => setSessions(d.sessions)).catch(console.error);
+    }
   }
 
+  // Keep ref in sync so the keydown closure (registered once) can call navigate
+  navigateRef.current = navigate;
+
+  const navItems = [
+    { page: "sessions" as const, label: "Sessions", icon: LayoutDashboard },
+    { page: "compare" as const, label: "Compare", icon: GitCompare },
+  ];
+
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="topbar-left">
-          <div className="eyebrow">agent-profiler</div>
-          <nav className="nav-pills">
-            {(["sessions", "compare"] as const).map((page) => (
+    <div className="flex flex-col min-h-screen bg-background">
+      {/* Topbar */}
+      <header className="sticky top-0 z-10 flex h-11 items-center justify-between border-b border-border bg-card/80 backdrop-blur-sm px-4">
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1.5">
+            <Activity className="h-3.5 w-3.5 text-primary" />
+            <span className="text-[11px] font-bold tracking-widest uppercase text-primary">
+              agent-profiler
+            </span>
+          </span>
+          <Separator orientation="vertical" className="h-4" />
+          <nav className="flex gap-0.5">
+            {navItems.map(({ page, label, icon: Icon }) => (
               <button
                 key={page}
-                className={`nav-pill${view.page === page ? " active" : ""}`}
                 onClick={() => navigate({ page })}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
+                  view.page === page
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                )}
               >
-                {page === "sessions" ? "Sessions" : "Compare"}
+                <Icon className="h-3.5 w-3.5" />
+                {label}
               </button>
             ))}
           </nav>
         </div>
-        <div className="topbar-right">
-          <button
-            className={`ghost${liveTailEnabled ? " active-btn" : ""}`}
-            onClick={() => setLiveTailEnabled((v) => !v)}
-            title="Toggle live tail"
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setLiveTailOpen((v) => !v)}
+            className={cn(
+              "gap-1.5 text-xs",
+              liveTailOpen && "text-[hsl(var(--green))] border-[hsl(var(--green))]/30 border"
+            )}
           >
-            {liveTailEnabled ? "● Live" : "Live tail"}
-          </button>
-          <button className="ghost" onClick={() => setOmnibarOpen(true)}>
-            ⌘K
-          </button>
+            <Radio className={cn("h-3.5 w-3.5", liveTailOpen && "live-pulse")} />
+            {liveTailOpen ? "Live" : "Live tail"}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setOmnibarOpen(true)} className="gap-1.5 text-xs text-muted-foreground">
+            <Command className="h-3.5 w-3.5" />K
+          </Button>
         </div>
       </header>
 
-      <div className="main-layout">
-        <div className="content-area">
+      {/* Main layout */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Content */}
+        <main className="flex-1 overflow-y-auto px-6 py-5">
           <Breadcrumb view={view} history={history} onNavigate={navigate} />
 
           {view.page === "sessions" && (
@@ -1245,9 +1691,7 @@ export function App() {
           {view.page === "session" && (
             <SessionDetailView
               sessionId={view.id}
-              onTurnSelect={(id) =>
-                navigate({ page: "turn", id, sessionId: view.id })
-              }
+              onTurnSelect={(id) => navigate({ page: "turn", id, sessionId: view.id })}
               onCacheView={() => navigate({ page: "cache", sessionId: view.id })}
             />
           )}
@@ -1255,6 +1699,7 @@ export function App() {
             <TurnDetailView
               turnId={view.id}
               sessionId={view.sessionId}
+              allTurns={sessionTurns}
               onPromptView={(llmCallId) =>
                 navigate({ page: "prompt", llmCallId, sessionId: view.sessionId })
               }
@@ -1265,11 +1710,12 @@ export function App() {
             <PromptInspectorView llmCallId={view.llmCallId} sessionId={view.sessionId} />
           )}
           {view.page === "compare" && <CompareView />}
-        </div>
+        </main>
 
-        {liveTailEnabled && (
-          <aside className="live-tail-aside">
-            <LiveTailPanel enabled={liveTailEnabled} />
+        {/* Live tail — separate panel, not persistent sidebar */}
+        {liveTailOpen && (
+          <aside className="w-64 border-l border-border bg-card flex flex-col shrink-0">
+            <LiveTailView onClose={() => setLiveTailOpen(false)} />
           </aside>
         )}
       </div>
@@ -1279,7 +1725,7 @@ export function App() {
         onClose={() => setOmnibarOpen(false)}
         onNavigate={navigate}
         sessions={sessions}
-        onLiveTail={() => setLiveTailEnabled((v) => !v)}
+        onLiveTail={() => setLiveTailOpen((v) => !v)}
       />
     </div>
   );
