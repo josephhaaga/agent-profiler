@@ -1,16 +1,54 @@
 {
-  "name": "@harness-profiler/opencode",
-  "version": "0.1.0",
+  "name": "opencode-agent-profiler",
+  "version": "0.2.0",
+  "description": "OpenCode plugin: ship traces to agent-profiler (local-first AI agent observability)",
   "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "opencode",
+    "opentelemetry",
+    "openinference",
+    "tracing",
+    "observability",
+    "llm",
+    "agent-profiler"
+  ],
   "main": "./dist/index.js",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "description": "OpenCode LM-middleware capture for harness-profiler (§4.2-B)",
-  "keywords": ["opencode", "harness-profiler", "tracing", "lm-middleware"],
-  "dependencies": {
-    "@agent-profiler/schema": "workspace:*"
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "bunx tsc -p tsconfig.json",
     "typecheck": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.17.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@arizeai/openinference-core": "^2.2.0",
+    "@arizeai/openinference-semantic-conventions": "^2.5.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0",
+    "@opentelemetry/resources": "^2.8.0",
+    "@opentelemetry/sdk-trace-node": "^2.8.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.17.4",
+    "@types/node": "^22"
   }
 }

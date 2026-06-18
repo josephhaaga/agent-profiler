@@ -10,16 +10,62 @@ profiling** (no LLM-as-judge in the hot path).
 
 ## Quickstart
 
+### 1. Start the server
+
 ```bash
-# Start the server (OTLP collector + REST API + web UI on one port)
 bun dev
-
-# Open the UI
-open http://localhost:7070
-
-# Point opencode-openinference at the OTLP endpoint
-# In your opencode config: OPENINFERENCE_COLLECTOR_ENDPOINT=http://localhost:7070
+# Listening on http://localhost:7070
+#   OTLP endpoint: http://localhost:7070/v1/traces
+#   Web UI:        http://localhost:7070/
 ```
+
+### 2. Install the OpenCode plugin
+
+Add one line to your `opencode.json` (project or `~/.config/opencode/opencode.json`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-agent-profiler"]
+}
+```
+
+OpenCode auto-installs the plugin from npm on next startup. Restart OpenCode and traces
+will start flowing to `http://localhost:7070/v1/traces`.
+
+The plugin warns via `client.app.log` if the server is not reachable at startup — it
+never blocks the agent.
+
+### 3. Open the UI
+
+```bash
+open http://localhost:7070
+```
+
+### Options
+
+Point the plugin at a non-default host (e.g. a shared team server):
+
+```json
+{
+  "plugin": [["opencode-agent-profiler", { "endpoint": "http://my-server:7070/v1/traces" }]]
+}
+```
+
+Or set the env var before launching OpenCode:
+
+```bash
+AGENT_PROFILER_ENDPOINT=http://my-server:7070/v1/traces opencode
+```
+
+| Option | Env var | Default | Description |
+|--------|---------|---------|-------------|
+| `endpoint` | `AGENT_PROFILER_ENDPOINT` | `http://localhost:7070/v1/traces` | OTLP traces URL |
+| `captureContent` | `OI_CAPTURE_CONTENT` | `true` | Capture prompt/response text |
+| `disabled` | `AGENT_PROFILER_DISABLED` | `false` | Disable the plugin entirely |
+| `projectName` | — | `opencode` | Label traces by project in the UI |
+| `hideInputs` | `OPENINFERENCE_HIDE_INPUTS` | `false` | Redact all input content |
+| `hideOutputs` | `OPENINFERENCE_HIDE_OUTPUTS` | `false` | Redact all output content |
 
 ## What it does
 
@@ -48,14 +94,15 @@ packages/
              prompt inspector, compare view, ⌘K omnibar, SSE live tail
 
 integrations/
-  opencode/  @harness-profiler/opencode — LM-middleware capture for richer span attributes
-             (tool definitions, prompt segments, static-prefix hash)
+  opencode/  opencode-agent-profiler — OpenCode plugin: ships OpenInference OTLP traces
+             to agent-profiler. Includes enriched span attributes (tool definitions,
+             prompt segments, static-prefix hash) via the opencode plugin hook surface.
 ```
 
 ## Architecture
 
 ```
-opencode + opencode-openinference
+opencode + opencode-agent-profiler (npm plugin)
         │ OTLP/HTTP-JSON  (/v1/traces)
         ▼
   agent-profiler server  (:7070)
@@ -98,8 +145,9 @@ prompt.static_prefix.sha256
 prompt.static_prefix.tokens
 ```
 
-Use `@harness-profiler/opencode` (LM-middleware capture, zero upstream dependency) or
-`@agent-profiler/proxy` (provider proxy, also captures VS Code Copilot) to emit these.
+Use `opencode-agent-profiler` (the OpenCode plugin) to emit these — it is included
+automatically when the plugin is active. The `@agent-profiler/proxy` (provider proxy)
+also captures VS Code Copilot traffic.
 
 ## Development
 
