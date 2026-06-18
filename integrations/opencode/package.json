@@ -1,9 +1,13 @@
 {
   "name": "opencode-agent-profiler",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "OpenCode plugin: ship traces to agent-profiler (local-first AI agent observability)",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/josephhaaga/agent-profiler.git"
+  },
   "keywords": [
     "opencode",
     "opentelemetry",
