@@ -10,7 +10,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, openSync, unlinkSync } from "fs";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
@@ -19,13 +19,38 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
-const STATE_DIR = join(homedir(), ".agent-profiler");
-const PID_FILE  = join(STATE_DIR, "agent-profiler.pid");
-const LOG_FILE  = join(STATE_DIR, "agent-profiler.log");
+const STATE_DIR   = join(homedir(), ".agent-profiler");
+const PID_FILE    = join(STATE_DIR, "agent-profiler.pid");
+const LOG_FILE    = join(STATE_DIR, "agent-profiler.log");
+const SERVER_BUNDLE = join(__dirname, "server/index.js");
+const WEB_DIST    = join(__dirname, "web");
 
-// Compiled server binary shipped inside this package.
-// bun build --compile produces a platform-native executable — no Bun needed at runtime.
-const SERVER_BIN = join(__dirname, "server-bin");
+// ── Bun detection ─────────────────────────────────────────────────────────────
+
+function findBun(): string | null {
+  // Respect explicit override
+  if (process.env.BUN_PATH && existsSync(process.env.BUN_PATH)) return process.env.BUN_PATH;
+  // Common install locations
+  const candidates = [
+    join(homedir(), ".bun/bin/bun"),
+    "/usr/local/bin/bun",
+    "/opt/homebrew/bin/bun",
+  ];
+  for (const p of candidates) if (existsSync(p)) return p;
+  // Try PATH via which/where
+  const result = spawnSync(process.platform === "win32" ? "where" : "which", ["bun"], { encoding: "utf8" });
+  const found = result.stdout?.trim().split("\n")[0];
+  return found && existsSync(found) ? found : null;
+}
+
+function requireBun(): string {
+  const bun = findBun();
+  if (bun) return bun;
+  console.error("agent-profiler requires Bun to run the server.");
+  console.error("Install it with:  curl -fsSL https://bun.sh/install | bash");
+  console.error("Then retry:       npx @josephhaaga/agent-profiler start");
+  process.exit(1);
+}
 
 // ── PID helpers ───────────────────────────────────────────────────────────────
 
@@ -82,20 +107,21 @@ async function cmdStart(): Promise<void> {
   }
 
   ensureStateDir();
+  const bun = requireBun();
 
-  if (!existsSync(SERVER_BIN)) {
-    console.error(`Server binary not found at ${SERVER_BIN}`);
+  if (!existsSync(SERVER_BUNDLE)) {
+    console.error(`Server bundle not found at ${SERVER_BUNDLE}`);
     console.error(`Try reinstalling: npm install -g @josephhaaga/agent-profiler`);
     process.exit(1);
   }
 
   const logFd = openSync(LOG_FILE, "a");
-  const child = spawn(SERVER_BIN, [], {
+  const child = spawn(bun, ["run", SERVER_BUNDLE], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env: {
       ...process.env,
-      AGENT_PROFILER_WEB_DIST: join(__dirname, "web"),
+      AGENT_PROFILER_WEB_DIST: WEB_DIST,
     },
   });
 

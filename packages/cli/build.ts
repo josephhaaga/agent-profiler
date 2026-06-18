@@ -2,11 +2,12 @@
  * Build script for packages/cli
  *
  * Produces dist/:
- *   dist/index.js     — CLI entrypoint (tsc → ESM, Node-compatible, no Bun APIs)
- *   dist/server-bin   — self-contained server binary (bun build --compile)
- *   dist/web/         — SPA assets copied from packages/web/dist/
+ *   dist/index.js        — CLI entrypoint (tsc → ESM, Node-compatible)
+ *   dist/server/index.js — server bundle (Bun-bundled JS, run via `bun run`)
+ *   dist/web/            — SPA assets copied from packages/web/dist/
  *
- * The compiled server binary requires no runtime (not even Bun) on the target machine.
+ * The server bundle is run by `bun run` at daemon start time.
+ * Bun must be installed on the user's machine (the CLI checks and errors clearly if not).
  *
  * Prerequisite: packages/web/dist must exist (run `bun run build` from repo root first).
  */
@@ -22,7 +23,7 @@ const OUT  = join(import.meta.dir, "dist");
 if (existsSync(OUT)) rmSync(OUT, { recursive: true });
 mkdirSync(OUT, { recursive: true });
 
-// ── 1. Compile CLI with tsc (Node-compatible ESM output) ──────────────────────
+// ── 1. Compile CLI with tsc (Node-compatible ESM) ─────────────────────────────
 
 console.log("Compiling CLI (tsc)...");
 const tsc = Bun.spawnSync(["bunx", "tsc", "-p", "tsconfig.json"], {
@@ -30,30 +31,29 @@ const tsc = Bun.spawnSync(["bunx", "tsc", "-p", "tsconfig.json"], {
   stdio: ["ignore", "inherit", "inherit"],
 });
 if (tsc.exitCode !== 0) process.exit(tsc.exitCode ?? 1);
-console.log("  → dist/index.js");
 
 // Prepend shebang for direct execution
 const cliOut = join(OUT, "index.js");
 const existing = await Bun.file(cliOut).text();
 await Bun.write(cliOut, `#!/usr/bin/env node\n${existing}`);
 chmodSync(cliOut, 0o755);
+console.log("  → dist/index.js");
 
-// ── 2. Compile server to self-contained binary (bun build --compile) ──────────
+// ── 2. Bundle server as JS (Bun-bundled, run via `bun run`) ───────────────────
 
-console.log("Compiling server binary (bun build --compile)...");
-const serverBin = join(OUT, "server-bin");
-const compile = Bun.spawnSync([
-  "bun", "build",
-  "--compile",
-  "--outfile", serverBin,
-  join(ROOT, "packages/server/src/index.ts"),
-], {
-  cwd: ROOT,
-  stdio: ["ignore", "inherit", "inherit"],
+console.log("Bundling server...");
+const serverResult = await Bun.build({
+  entrypoints: [join(ROOT, "packages/server/src/index.ts")],
+  outdir: join(OUT, "server"),
+  target: "bun",
+  format: "esm",
+  minify: false,
 });
-if (compile.exitCode !== 0) process.exit(compile.exitCode ?? 1);
-chmodSync(serverBin, 0o755);
-console.log("  → dist/server-bin");
+if (!serverResult.success) {
+  for (const msg of serverResult.logs) console.error(msg);
+  process.exit(1);
+}
+console.log("  → dist/server/index.js");
 
 // ── 3. Copy SPA assets ────────────────────────────────────────────────────────
 
