@@ -1,0 +1,4 @@
+[test]
+# Exclude the e2e container's fake-repo test files — they contain intentional
+# bugs and are only meant to be run by the agent under test inside Docker.
+pathIgnorePatterns = ["integrations/opencode/test/container/**"]
