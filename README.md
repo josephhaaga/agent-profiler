@@ -1,27 +1,35 @@
 # agent-profiler
 
-Local-first profiler for AI agent harnesses. The "Datadog APM for agents" — but the v1
-wedge is the **local harness developer** iterating on prompts, tools, MCPs, and model
-choices who needs to see *why* one harness underperforms another.
+Local-first profiler for AI agent harnesses. Captures OpenInference OTLP traces
+from OpenCode (and other harnesses), stores them in SQLite, and serves a
+keyboard-driven web UI with statistical profiling — cache efficiency, token
+attribution, prompt composition, model right-sizing, and cross-harness comparison.
 
-Replaces Arize Phoenix / Raindrop Workshop as the analysis surface for OpenInference
-OTLP traces, with a faster, keyboard-driven UI and **statistical / classical-ML
-profiling** (no LLM-as-judge in the hot path).
+## Install
+
+```bash
+npx agent-profiler start
+```
+
+That's it. No clone, no Bun, no dependencies — `npx` downloads and runs the
+package in one step.
+
+The server starts as a background daemon on `http://localhost:7070` and persists
+across reboots via a PID file in `~/.agent-profiler/`.
 
 ## Quickstart
 
 ### 1. Start the server
 
 ```bash
-bun dev
-# Listening on http://localhost:7070
-#   OTLP endpoint: http://localhost:7070/v1/traces
-#   Web UI:        http://localhost:7070/
+npx agent-profiler start
+# agent-profiler started (PID 12345) — http://localhost:7070
+#   log: ~/.agent-profiler/agent-profiler.log
 ```
 
 ### 2. Install the OpenCode plugin
 
-Add one line to your `opencode.json` (project or `~/.config/opencode/opencode.json`):
+Add one line to your `opencode.json` (project-level or `~/.config/opencode/opencode.json`):
 
 ```json
 {
@@ -30,19 +38,30 @@ Add one line to your `opencode.json` (project or `~/.config/opencode/opencode.js
 }
 ```
 
-OpenCode auto-installs the plugin from npm on next startup. Restart OpenCode and traces
-will start flowing to `http://localhost:7070/v1/traces`.
+OpenCode auto-installs the plugin from npm on next startup. Restart OpenCode —
+traces will start flowing to `http://localhost:7070/v1/traces`.
 
-The plugin warns via `client.app.log` if the server is not reachable at startup — it
-never blocks the agent.
+The plugin warns via `client.app.log` if the server is unreachable at startup.
+It never blocks the agent.
 
 ### 3. Open the UI
 
 ```bash
-open http://localhost:7070
+npx agent-profiler open
 ```
 
-### Options
+## CLI reference
+
+```
+agent-profiler start       Start the server as a background daemon
+agent-profiler stop        Stop the background daemon
+agent-profiler status      Show running/stopped, PID, and health
+agent-profiler logs        Print the last 100 lines of server logs
+agent-profiler logs -f     Tail server logs (follow mode)
+agent-profiler open        Open the web UI in your browser
+```
+
+## Plugin options
 
 Point the plugin at a non-default host (e.g. a shared team server):
 
@@ -52,7 +71,7 @@ Point the plugin at a non-default host (e.g. a shared team server):
 }
 ```
 
-Or set the env var before launching OpenCode:
+Or via environment variable:
 
 ```bash
 AGENT_PROFILER_ENDPOINT=http://my-server:7070/v1/traces opencode
@@ -67,6 +86,13 @@ AGENT_PROFILER_ENDPOINT=http://my-server:7070/v1/traces opencode
 | `hideInputs` | `OPENINFERENCE_HIDE_INPUTS` | `false` | Redact all input content |
 | `hideOutputs` | `OPENINFERENCE_HIDE_OUTPUTS` | `false` | Redact all output content |
 
+## Server environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_PROFILER_PORT` | `7070` | Server port |
+| `AGENT_PROFILER_DB_PATH` | `~/.agent-profiler/agent-profiler.sqlite` | SQLite database path |
+
 ## What it does
 
 - **Ingests** OpenInference OTLP/HTTP-JSON traces from any harness
@@ -80,25 +106,6 @@ AGENT_PROFILER_ENDPOINT=http://my-server:7070/v1/traces opencode
 - **Streams** live events over SSE as traces arrive
 - **Serves** a keyboard-driven React SPA on the same port
 
-## Packages
-
-```
-packages/
-  schema/    Shared TypeScript types (SessionRecord, TurnRecord, LlmCallRecord, …)
-  store/     SQLite DAL — 8-table schema, all CRUD + analytics queries
-  ingest/    OTLP/HTTP-JSON collector + span normalizer
-  profiler/  Five classical analyzers → typed Insight objects
-  proxy/     Provider proxy: captures exact on-wire prompts + usage (works with VS Code Copilot)
-  server/    Bun HTTP: mounts ingest + REST/SSE API + serves SPA
-  web/       React + Vite SPA — sessions explorer, turn waterfall, cache panel,
-             prompt inspector, compare view, ⌘K omnibar, SSE live tail
-
-integrations/
-  opencode/  opencode-agent-profiler — OpenCode plugin: ships OpenInference OTLP traces
-             to agent-profiler. Includes enriched span attributes (tool definitions,
-             prompt segments, static-prefix hash) via the opencode plugin hook surface.
-```
-
 ## Architecture
 
 ```
@@ -111,6 +118,26 @@ opencode + opencode-agent-profiler (npm plugin)
   ├─ REST API  /api/sessions  /api/turns/:id  /api/llm-calls/:id/segments  …
   ├─ SSE tail  /api/stream
   └─ static SPA
+```
+
+## Packages
+
+```
+packages/
+  schema/    Shared TypeScript types (SessionRecord, TurnRecord, LlmCallRecord, …)
+  store/     SQLite DAL — 8-table schema, all CRUD + analytics queries
+  ingest/    OTLP/HTTP-JSON collector + span normalizer
+  profiler/  Five classical analyzers → typed Insight objects
+  proxy/     Provider proxy: captures exact on-wire prompts + usage (works with VS Code Copilot)
+  server/    Bun HTTP: mounts ingest + REST/SSE API + serves SPA
+  web/       React + Vite SPA — sessions explorer, turn waterfall, cache panel,
+             prompt inspector, compare view, ⌘K omnibar, SSE live tail
+  cli/       agent-profiler CLI — start/stop/status/logs/open commands
+
+integrations/
+  opencode/  opencode-agent-profiler — OpenCode plugin: ships OpenInference OTLP traces
+             to agent-profiler. Includes enriched span attributes (tool definitions,
+             prompt segments, static-prefix hash) via the opencode plugin hook surface.
 ```
 
 ## API
@@ -145,23 +172,20 @@ prompt.static_prefix.sha256
 prompt.static_prefix.tokens
 ```
 
-Use `opencode-agent-profiler` (the OpenCode plugin) to emit these — it is included
-automatically when the plugin is active. The `@agent-profiler/proxy` (provider proxy)
-also captures VS Code Copilot traffic.
+These are emitted automatically by `opencode-agent-profiler`.
 
 ## Development
 
 ```bash
 bun install          # install workspace deps
-bun run build        # build all packages
+bun run build        # build all packages (schema → store → … → web → cli)
 bun run typecheck    # typecheck all packages
-bun test             # run tests (47 tests across store, ingest, profiler)
-bun dev              # start server in dev mode (hot reload)
+bun test             # run tests
+bun dev              # start server in dev mode (hot reload, no daemon)
 ```
 
-## Environment variables
+Seed test data after starting the dev server:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AGENT_PROFILER_PORT` | `7070` | Server port |
-| `AGENT_PROFILER_DB_PATH` | `./agent-profiler.sqlite` | SQLite database path |
+```bash
+python3 scripts/seed-fixtures.py
+```

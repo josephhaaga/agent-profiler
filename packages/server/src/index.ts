@@ -3,9 +3,14 @@ import type { OtlpExportRequest } from "@agent-profiler/ingest";
 import { analyzeCompare, runProfilers } from "@agent-profiler/profiler";
 import { Store } from "@agent-profiler/store";
 import { join } from "path";
+import { homedir } from "os";
+
+// Default DB path: ~/.agent-profiler/agent-profiler.sqlite so it persists across
+// working directories when run via `agent-profiler start`. Overridable via env.
+const DEFAULT_DB_PATH = join(homedir(), ".agent-profiler", "agent-profiler.sqlite");
 
 const store = new Store({
-  filePath: process.env.AGENT_PROFILER_DB_PATH ?? "./agent-profiler.sqlite",
+  filePath: process.env.AGENT_PROFILER_DB_PATH ?? DEFAULT_DB_PATH,
 });
 
 const port = Number(process.env.AGENT_PROFILER_PORT ?? 7070);
@@ -49,7 +54,11 @@ function notFound(msg = "Not found"): Response {
 
 // ── Static SPA serving ────────────────────────────────────────────────────────
 
-const WEB_DIST = join(import.meta.dir, "../../web/dist");
+// AGENT_PROFILER_WEB_DIST lets the CLI (or any other launcher) override where
+// the pre-built SPA lives without recompiling the server. Falls back to the
+// monorepo-relative path for local dev.
+const WEB_DIST =
+  process.env.AGENT_PROFILER_WEB_DIST ?? join(import.meta.dir, "../../web/dist");
 
 async function serveStatic(pathname: string): Promise<Response | null> {
   // strip leading /

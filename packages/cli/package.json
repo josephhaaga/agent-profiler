@@ -1,0 +1,36 @@
+{
+  "name": "agent-profiler",
+  "version": "0.0.0-dev",
+  "description": "Local-first AI agent observability — start, stop, and inspect your agent-profiler server",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/josephhaaga/agent-profiler.git"
+  },
+  "keywords": [
+    "opencode",
+    "opentelemetry",
+    "openinference",
+    "tracing",
+    "observability",
+    "llm",
+    "agent-profiler"
+  ],
+  "bin": {
+    "agent-profiler": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "bun run build.ts",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "bun-types": "^1.3.13"
+  }
+}

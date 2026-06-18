@@ -10,8 +10,8 @@
   ],
   "scripts": {
     "dev": "bun run --cwd packages/server dev",
-    "build": "bun run --cwd packages/schema build && bun run --cwd packages/store build && bun run --cwd packages/ingest build && bun run --cwd packages/profiler build && bun run --cwd packages/proxy build && bun run --cwd packages/server build && bun run --cwd packages/web build && bun run --cwd integrations/opencode build",
-    "typecheck": "bun run --cwd packages/schema typecheck && bun run --cwd packages/store typecheck && bun run --cwd packages/ingest typecheck && bun run --cwd packages/profiler typecheck && bun run --cwd packages/proxy typecheck && bun run --cwd packages/server typecheck && bun run --cwd packages/web typecheck && bun run --cwd integrations/opencode typecheck",
+    "build": "bun run --cwd packages/schema build && bun run --cwd packages/store build && bun run --cwd packages/ingest build && bun run --cwd packages/profiler build && bun run --cwd packages/proxy build && bun run --cwd packages/server build && bun run --cwd packages/web build && bun run --cwd integrations/opencode build && bun run --cwd packages/cli build",
+    "typecheck": "bun run --cwd packages/schema typecheck && bun run --cwd packages/store typecheck && bun run --cwd packages/ingest typecheck && bun run --cwd packages/profiler typecheck && bun run --cwd packages/proxy typecheck && bun run --cwd packages/server typecheck && bun run --cwd packages/web typecheck && bun run --cwd integrations/opencode typecheck && bun run --cwd packages/cli typecheck",
     "test": "bun test"
   },
   "devDependencies": {
