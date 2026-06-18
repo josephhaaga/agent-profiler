@@ -10,3 +10,4 @@ dist
 coverage
 .vite
 /.bun
+*.bun-build
