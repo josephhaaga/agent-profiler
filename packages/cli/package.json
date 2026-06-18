@@ -1,5 +1,5 @@
 {
-  "name": "agent-profiler",
+  "name": "@josephhaaga/agent-profiler",
   "version": "0.0.0-dev",
   "description": "Local-first AI agent observability — start, stop, and inspect your agent-profiler server",
   "type": "module",

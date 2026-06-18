@@ -8,7 +8,7 @@ attribution, prompt composition, model right-sizing, and cross-harness compariso
 ## Install
 
 ```bash
-npx agent-profiler start
+npx @josephhaaga/agent-profiler start
 ```
 
 That's it. No clone, no Bun, no dependencies — `npx` downloads and runs the
@@ -22,7 +22,7 @@ across reboots via a PID file in `~/.agent-profiler/`.
 ### 1. Start the server
 
 ```bash
-npx agent-profiler start
+npx @josephhaaga/agent-profiler start
 # agent-profiler started (PID 12345) — http://localhost:7070
 #   log: ~/.agent-profiler/agent-profiler.log
 ```
@@ -47,7 +47,7 @@ It never blocks the agent.
 ### 3. Open the UI
 
 ```bash
-npx agent-profiler open
+npx @josephhaaga/agent-profiler open
 ```
 
 ## CLI reference

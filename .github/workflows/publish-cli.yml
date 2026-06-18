@@ -1,4 +1,4 @@
-name: Publish agent-profiler
+name: Publish @josephhaaga/agent-profiler
 
 on:
   push:
@@ -48,3 +48,4 @@ jobs:
       - name: Publish to npm
         run: npm publish --access public --provenance --workspaces=false
         working-directory: packages/cli
+
