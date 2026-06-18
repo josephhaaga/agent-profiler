@@ -40,10 +40,13 @@ import { spawn } from "node:child_process";
 const HARNESS_DIR = dirname(import.meta.path);
 const INTEGRATION_DIR = resolve(HARNESS_DIR, "../..");
 const REPO_ROOT = resolve(INTEGRATION_DIR, "../..");
-const SERVER_SRC = join(REPO_ROOT, "packages/server/src/index.ts");
-const PLUGIN_DIST = join(INTEGRATION_DIR, "dist/index.js");
+// Allow container env overrides for paths that differ inside Docker.
+const SERVER_SRC = process.env["AGENT_PROFILER_SERVER_SRC"] ?? join(REPO_ROOT, "packages/server/src/index.ts");
+const PLUGIN_DIST = process.env["AGENT_PROFILER_PLUGIN_DIST"] ?? join(INTEGRATION_DIR, "dist/index.js");
 const FIXTURES_DIR = join(HARNESS_DIR, "../fixtures");
 const SCENARIOS_DIR = join(HARNESS_DIR, "scenarios");
+// Working directory opencode operates in (defaults to current dir; overridden by container).
+const OPENCODE_WORKDIR = process.env["AGENT_PROFILER_WORKSPACE"] ?? process.cwd();
 
 // ---------------------------------------------------------------------------
 // Args
@@ -234,7 +237,7 @@ async function main(): Promise<void> {
       {
         AGENT_PROFILER_PORT: String(serverPort),
         AGENT_PROFILER_DB_PATH: dbPath,
-        AGENT_PROFILER_WEB_DIST: join(REPO_ROOT, "packages/web/dist"),
+        AGENT_PROFILER_WEB_DIST: process.env["AGENT_PROFILER_WEB_DIST"] ?? join(REPO_ROOT, "packages/web/dist"),
       },
       "server",
     );
@@ -317,6 +320,7 @@ async function main(): Promise<void> {
     const ocProc = spawn("opencode", ocArgs, {
       env: { ...process.env, ...ocEnv },
       stdio: ["ignore", "pipe", "pipe"],
+      cwd: OPENCODE_WORKDIR,
     });
 
     ocProc.stdout.on("data", (d: Buffer) => {
