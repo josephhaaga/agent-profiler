@@ -1,19 +1,19 @@
 [
   {
     "session": {
-      "id": "ses_123478c3affewdq4TjrRO0tEvn",
+      "id": "ses_1233609f6ffepAPej1l3aCaMjq",
       "harness": "opencode",
       "agent": "title",
       "model": "stub-model",
-      "startedAt": "2026-06-18T21:52:16.718Z",
-      "endedAt": "2026-06-18T21:52:17.123Z",
+      "startedAt": "2026-06-18T22:11:24.185Z",
+      "endedAt": "2026-06-18T22:11:24.558Z",
       "turnCount": 1,
-      "llmCallCount": 1,
+      "llmCallCount": 2,
       "toolCallCount": 0,
-      "promptTokens": 100,
-      "completionTokens": 30,
+      "promptTokens": 200,
+      "completionTokens": 60,
       "reasoningTokens": 0,
-      "cacheReadTokens": 80,
+      "cacheReadTokens": 160,
       "cacheWriteTokens": 0,
       "costTotal": 0
     }
