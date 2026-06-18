@@ -14,6 +14,7 @@ import {
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { TraceBuilder } from "../src/trace-builder.js";
 import { CONFIG_DEFAULTS } from "../src/config.js";
+import type { UserMessage } from "../src/types.js";
 
 // ── Test fixtures ─────────────────────────────────────────────────────────────
 
@@ -48,8 +49,11 @@ function userMessage(overrides = {}) {
     sessionID: SESSION_ID,
     role: "user" as const,
     time: { created: Date.now() },
+    // Extra fields required by newer SDK versions; cast to avoid version skew.
+    agent: "build",
+    model: { providerID: "github-copilot", modelID: "claude-sonnet-4.6" },
     ...overrides,
-  };
+  } as unknown as UserMessage;
 }
 
 function assistantMessage(overrides: Record<string, unknown> = {}) {
@@ -172,7 +176,7 @@ describe("TraceBuilder", () => {
     );
 
     builder.onToolBefore(
-      { tool: "bash", sessionID: SESSION_ID, callID: CALL_ID },
+      { tool: "bash", sessionID: SESSION_ID, callID: CALL_ID, args: { command: "date" } },
       { args: { command: "date" } }
     );
     builder.onToolAfter(
