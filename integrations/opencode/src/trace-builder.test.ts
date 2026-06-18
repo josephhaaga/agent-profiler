@@ -139,34 +139,41 @@ describe("TraceBuilder", () => {
     expect(llm!.attributes["llm.cost.total"]).toBe(0.05);
   });
 
-  test("session.idle before message.updated does not lose token data", () => {
-    // Simulate the race: session.idle fires, then message.updated fires.
-    // With the 2s delay in index.ts this shouldn't happen in practice,
-    // but TraceBuilder itself should still handle it gracefully — the session
-    // gets deleted by endSession and onMessageUpdated returns early.
-    // The key invariant: no crash.
-
+  test("tokens present when chat.params fires before message.updated (normal order)", () => {
+    // The sequence we expect to work: chat.params fires, then message.updated
     builder.onChatMessage(
       { sessionID: SESSION_ID, agent: "build", model: { providerID: "github-copilot", modelID: "claude-sonnet-4.6" } },
       { message: userMessage(), parts: [] }
     );
-
     builder.onChatParams(
-      {
-        sessionID: SESSION_ID,
-        agent: "build",
-        model: { modelID: "claude-sonnet-4.6" },
-        provider: { info: { id: "github-copilot" } },
-        message: userMessage(),
-      },
+      { sessionID: SESSION_ID, agent: "build", model: { modelID: "claude-sonnet-4.6" }, provider: { info: { id: "github-copilot" } }, message: userMessage() },
       { temperature: 1, topP: 1, topK: 0, maxOutputTokens: 32000, options: {} }
     );
-
-    // session.idle fires BEFORE message.updated (the bad race)
+    builder.onMessageUpdated(assistantMessage());
     builder.endSession(SESSION_ID);
 
-    // message.updated fires late — should not crash
-    expect(() => builder.onMessageUpdated(assistantMessage())).not.toThrow();
+    const llm = exporter.getFinishedSpans().find((s) => s.name.startsWith("chat "));
+    expect(llm?.attributes["llm.cost.total"]).toBe(0.05);
+  });
+
+  test("tokens LOST when endSession fires between chat.params and message.updated", () => {
+    // This is the real-world race we're seeing:
+    // session.idle (from prior turn) fires between chat.params and message.updated
+    builder.onChatMessage(
+      { sessionID: SESSION_ID, agent: "build", model: { providerID: "github-copilot", modelID: "claude-sonnet-4.6" } },
+      { message: userMessage(), parts: [] }
+    );
+    builder.onChatParams(
+      { sessionID: SESSION_ID, agent: "build", model: { modelID: "claude-sonnet-4.6" }, provider: { info: { id: "github-copilot" } }, message: userMessage() },
+      { temperature: 1, topP: 1, topK: 0, maxOutputTokens: 32000, options: {} }
+    );
+    builder.endSession(SESSION_ID); // session.idle fires here — clears llmMap
+    builder.onMessageUpdated(assistantMessage()); // too late
+
+    const llm = exporter.getFinishedSpans().find((s) => s.name.startsWith("chat "));
+    // This test documents the known failure — tokens are lost in this ordering.
+    // The fix should make this pass with token data.
+    expect(llm?.attributes["llm.cost.total"]).toBe(0.05); // currently fails
   });
 
   test("tool span gets session.id attribute", () => {

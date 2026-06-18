@@ -164,12 +164,7 @@ export const AgentProfilerPlugin: Plugin = async (
           const sessionID =
             (ev.properties?.["sessionID"] as string | undefined) ??
             (ev.properties?.["sessionId"] as string | undefined);
-          if (sessionID) {
-            // Delay endSession slightly so any in-flight message.updated events
-            // carrying token data can drain the llmMap before we force-close.
-            const errored = ev.type === "session.error";
-            setTimeout(() => safe(() => builder.endSession(sessionID, errored)), 2000);
-          }
+          if (sessionID) builder.endSession(sessionID, ev.type === "session.error");
           break;
         }
         case "session.deleted": {

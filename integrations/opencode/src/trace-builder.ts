@@ -78,6 +78,12 @@ interface SessionState {
   pendingMessages?: { info: Message; parts: Part[] }[];
   /** Accumulated assistant text keyed by assistant messageID. */
   assistantText: Map<string, string>;
+  /**
+   * Set to true when endSession was called while llmMap/llmQueue were
+   * non-empty. The session stays alive until both drain, then auto-closes.
+   */
+  draining?: boolean;
+  drainingErrored?: boolean;
 }
 
 export class TraceBuilder {
@@ -129,6 +135,8 @@ export class TraceBuilder {
         llmQueue: [],
         tools: new Map(),
         assistantText: new Map(),
+        draining: false,
+        drainingErrored: false,
       };
       this.sessions.set(sessionID, s);
     } else if (agent && !s.agent) {
@@ -142,6 +150,18 @@ export class TraceBuilder {
   endSession(sessionID: string, errored = false): void {
     const s = this.sessions.get(sessionID);
     if (!s) return;
+    // If there are LLM spans still awaiting their message.updated token data,
+    // mark the session as draining rather than force-closing it. The session
+    // will be cleaned up by onMessageUpdated once the map empties.
+    if (s.llmMap.size > 0 || s.llmQueue.length > 0) {
+      s.draining = true;
+      s.drainingErrored = errored;
+      return;
+    }
+    this._closeSession(s, sessionID, errored);
+  }
+
+  private _closeSession(s: SessionState, sessionID: string, errored: boolean): void {
     // Force-close anything still open under this session.
     for (const t of s.tools.values()) {
       closeToolSpan(t.span, { identity: t.identity, errored: true, config: this.config });
@@ -365,6 +385,11 @@ export class TraceBuilder {
         session.turns.delete(turn.messageID);
         if (session.lastTurn === turn) session.lastTurn = undefined;
       }
+    }
+
+    // If the session was waiting to drain before closing, do so now.
+    if (session.draining && session.llmMap.size === 0 && session.llmQueue.length === 0) {
+      this._closeSession(session, assistant.sessionID, session.drainingErrored ?? false);
     }
   }
 
