@@ -1,6 +1,6 @@
 {
   "name": "opencode-agent-profiler",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "OpenCode plugin: ship traces to agent-profiler (local-first AI agent observability)",
   "type": "module",
   "license": "MIT",
