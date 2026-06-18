@@ -10,6 +10,7 @@
  * the oldest on each terminal `message.updated`.
  */
 import { type Span, type Tracer } from "@opentelemetry/api";
+import { SemanticConventions } from "@arizeai/openinference-semantic-conventions";
 import type { ResolvedConfig } from "./config.js";
 import type {
   AssistantMessage,
@@ -61,7 +62,14 @@ interface SessionState {
   turns: Map<string, TurnState>;
   /** Most recently opened turn (fallback when parentID unknown). */
   lastTurn?: TurnState;
-  /** FIFO of open LLM spans (oldest first). */
+  /**
+   * Open LLM spans keyed by the user messageID that triggered them
+   * (== input.message.id in chat.params == assistant.parentID in message.updated).
+   * This replaces the FIFO queue which assumed chat.params fires before
+   * message.updated — that ordering is not guaranteed in opencode ≥1.17.
+   */
+  llmMap: Map<string, OpenLlm>;
+  /** Fallback FIFO for cases where the message ID is unavailable. */
   llmQueue: OpenLlm[];
   /** Open tool spans keyed by callID. */
   tools: Map<string, OpenTool>;
@@ -117,6 +125,7 @@ export class TraceBuilder {
         createdAt: Date.now(),
         agent,
         turns: new Map(),
+        llmMap: new Map(),
         llmQueue: [],
         tools: new Map(),
         assistantText: new Map(),
@@ -124,6 +133,8 @@ export class TraceBuilder {
       this.sessions.set(sessionID, s);
     } else if (agent && !s.agent) {
       s.agent = agent;
+      // Retroactively set the attribute on the already-open session span.
+      s.span.setAttribute(SemanticConventions.AGENT_NAME, agent);
     }
     return s;
   }
@@ -136,6 +147,10 @@ export class TraceBuilder {
       closeToolSpan(t.span, { identity: t.identity, errored: true, config: this.config });
     }
     s.tools.clear();
+    for (const l of s.llmMap.values()) {
+      l.span.end();
+    }
+    s.llmMap.clear();
     for (const l of s.llmQueue) {
       l.span.end();
     }
@@ -254,6 +269,7 @@ export class TraceBuilder {
     const span = openLlmSpan({
       tracer: this.tracer,
       parent,
+      sessionID: input.sessionID,
       modelID: input.model.modelID,
       providerID: input.provider?.info?.id ?? "",
       invocationParams,
@@ -268,7 +284,14 @@ export class TraceBuilder {
     session.pendingSystem = undefined;
     session.pendingMessages = undefined;
 
-    session.llmQueue.push({ span, createdAt: Date.now() });
+    // Key by the user message ID so onMessageUpdated can look it up by
+    // assistant.parentID without relying on FIFO ordering.
+    const llmEntry = { span, createdAt: Date.now() };
+    if (turnMessageID) {
+      session.llmMap.set(turnMessageID, llmEntry);
+    } else {
+      session.llmQueue.push(llmEntry);
+    }
   }
 
   private assembleInputMessages(session: SessionState): OIMessage[] {
@@ -312,9 +335,13 @@ export class TraceBuilder {
 
     const assistantText = session.assistantText.get(assistant.id);
 
-    // Close the oldest open LLM span (FIFO). If none open, skip.
-    const open = session.llmQueue.shift();
+    // Look up the open LLM span by parentID (the user message that triggered
+    // this LLM call). Fall back to FIFO for spans opened without a message ID.
+    const open =
+      session.llmMap.get(assistant.parentID) ??
+      session.llmQueue.shift();
     if (open) {
+      session.llmMap.delete(assistant.parentID);
       const outputMessage: OIMessage = {
         role: "assistant",
         content: assistantText,
@@ -329,7 +356,7 @@ export class TraceBuilder {
       // A turn is "done" when its terminal assistant message arrives and no
       // tools remain mid-flight. Tool-use loops emit multiple assistant
       // messages; we only close when nothing is pending.
-      if (turn.pendingTools.size === 0 && session.llmQueue.length === 0) {
+      if (turn.pendingTools.size === 0 && session.llmMap.size === 0 && session.llmQueue.length === 0) {
         closeTurnSpan(turn.span, {
           outputText: turn.finalText,
           errored: Boolean(assistant.error),
@@ -351,6 +378,7 @@ export class TraceBuilder {
     const { span, identity } = openToolSpan({
       tracer: this.tracer,
       parent,
+      sessionID: input.sessionID,
       tool: input.tool,
       callID: input.callID,
       args: output?.args,
@@ -410,6 +438,13 @@ export class TraceBuilder {
         }
         return true;
       });
+      for (const [mid, l] of s.llmMap) {
+        if (now - l.createdAt > maxAge) {
+          l.span.setAttribute("opencode.timeout", true);
+          l.span.end();
+          s.llmMap.delete(mid);
+        }
+      }
       for (const [mid, turn] of s.turns) {
         if (now - turn.createdAt > maxAge && turn.pendingTools.size === 0) {
           turn.span.setAttribute("opencode.timeout", true);
@@ -421,6 +456,7 @@ export class TraceBuilder {
       if (
         now - s.createdAt > maxAge &&
         s.tools.size === 0 &&
+        s.llmMap.size === 0 &&
         s.llmQueue.length === 0 &&
         s.turns.size === 0
       ) {

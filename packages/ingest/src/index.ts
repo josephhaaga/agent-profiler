@@ -223,7 +223,17 @@ export async function ingestOtlpPayload(
     const roots = buildTree(allSpans);
 
     for (const root of roots) {
-      await processSessionRoot(root, harness, store, result, emitter);
+      const orphanSessionId = str(root.span.attrs, "session.id");
+      const isOrphan =
+        root.span.parentId !== undefined &&
+        orphanSessionId !== undefined &&
+        orphanSessionId !== root.span.id;
+
+      if (isOrphan) {
+        await processOrphanBatch(root, orphanSessionId!, harness, store, result, emitter);
+      } else {
+        await processSessionRoot(root, harness, store, result, emitter);
+      }
     }
   }
 
@@ -318,15 +328,117 @@ async function processSessionRoot(
   result.sessionsUpserted++;
   emitter?.({ type: "session", data: session });
 
-  // Process turn children
+  // Process children — only CHAIN/turn spans are actual turns; LLM and tool
+  // spans can be direct children of the session when emitTurnSpans=false or
+  // when they arrived before their turn parent closed.
   let turnIdx = 0;
-  for (const turnNode of root.children) {
-    await processTurn(turnNode, sessionId, turnIdx++, store, result, emitter);
+  for (const child of root.children) {
+    const k = child.span.kind;
+    if (k === "chain" || k === "turn") {
+      await processTurn(child, sessionId, turnIdx++, store, result, emitter);
+    } else if (k === "llm") {
+      // LLM direct child of session — attach without a turn wrapper
+      await processLlmCall(child, sessionId, sessionId, store, result, emitter);
+    } else if (k === "tool") {
+      await processToolCall(child.span, sessionId, sessionId, store, result, emitter);
+    }
   }
+
+  // Re-aggregate from the store so counts reflect everything written above,
+  // including LLM/tool spans nested inside turns.
+  recomputeSessionTotals(sessionId, store, emitter);
 }
 
-// ── Turn-level processing ─────────────────────────────────────────────────────
+// ── Orphan-batch processing ───────────────────────────────────────────────────
+// Handles the case where BatchSpanProcessor flushes turn/LLM/tool spans in a
+// separate HTTP request from their parent session span. We route them to the
+// existing session via session.id rather than creating a ghost session.
 
+async function processOrphanBatch(
+  root: SpanTree,
+  sessionId: string,
+  harness: HarnessKind,
+  store: Store,
+  result: IngestResult,
+  emitter?: (event: { type: string; data: unknown }) => void
+): Promise<void> {
+  const kind = root.span.kind;
+
+  // Ensure the session exists in the store (may already be there from an
+  // earlier batch; if not, create a minimal placeholder so foreign keys work).
+  const existing = store.getSession(sessionId);
+  if (!existing) {
+    const attrs = root.span.attrs;
+    let meta: Record<string, unknown> = {};
+    try { meta = JSON.parse(str(attrs, "metadata") ?? "{}") as Record<string, unknown>; } catch { /* */ }
+    store.upsertSession({
+      id: sessionId,
+      harness,
+      agent: str(attrs, "agent.name") ?? (typeof meta.agent === "string" ? meta.agent : undefined),
+      model: str(attrs, "llm.model_name") ?? (typeof meta.model === "string" ? meta.model : undefined),
+      startedAt: root.span.startedAt,
+      endedAt: undefined,
+      turnCount: 0,
+      llmCallCount: 0,
+      toolCallCount: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      reasoningTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costTotal: 0,
+    });
+    result.sessionsUpserted++;
+  }
+
+  // Route by span kind: turn → processTurn, LLM/tool → processLlmCall/processToolCall
+  if (kind === "chain" || kind === "turn") {
+    const idx = store.listTurns(sessionId).length;
+    await processTurn(root, sessionId, idx, store, result, emitter);
+  } else {
+    // Bare LLM or tool span arriving outside a turn — attach directly to session.
+    // Use the span id as a synthetic turnId so FK constraints are satisfied.
+    const syntheticTurnId = root.span.id;
+    for (const child of [root, ...root.children]) {
+      if (child.span.kind === "llm") {
+        await processLlmCall(child, syntheticTurnId, sessionId, store, result, emitter);
+      } else if (child.span.kind === "tool") {
+        await processToolCall(child.span, syntheticTurnId, sessionId, store, result, emitter);
+      }
+    }
+  }
+
+  // Re-aggregate the session totals from what's now in the store
+  recomputeSessionTotals(sessionId, store, emitter);
+}
+
+function recomputeSessionTotals(
+  sessionId: string,
+  store: Store,
+  emitter?: (event: { type: string; data: unknown }) => void
+): void {
+  const existing = store.getSession(sessionId);
+  if (!existing) return;
+  const turns = store.listTurns(sessionId);
+  const llmCalls = store.listLlmCallsBySession(sessionId);
+  const toolCalls = store.listToolCallsBySession(sessionId);
+  const updated = {
+    ...existing,
+    // Fill in model from the first LLM call if not already on the session span.
+    model: existing.model ?? llmCalls[0]?.model ?? undefined,
+    turnCount: turns.length,
+    llmCallCount: llmCalls.length,
+    toolCallCount: toolCalls.length,
+    promptTokens: llmCalls.reduce((s, c) => s + c.promptTokens, 0),
+    completionTokens: llmCalls.reduce((s, c) => s + c.completionTokens, 0),
+    reasoningTokens: llmCalls.reduce((s, c) => s + c.reasoningTokens, 0),
+    cacheReadTokens: llmCalls.reduce((s, c) => s + c.cacheReadTokens, 0),
+    cacheWriteTokens: llmCalls.reduce((s, c) => s + c.cacheWriteTokens, 0),
+    costTotal: llmCalls.reduce((s, c) => s + c.cost, 0),
+  };
+  store.upsertSession(updated);
+  emitter?.({ type: "session", data: updated });
+}
 async function processTurn(
   node: SpanTree,
   sessionId: string,
@@ -406,6 +518,33 @@ async function processTurn(
   for (const toolSpan of allToolDescendants) {
     await processToolCall(toolSpan, turnId, sessionId, store, result, emitter);
   }
+
+  // Re-aggregate turn totals from what's actually in the store now.
+  recomputeTurnTotals(turnId, sessionId, store, emitter);
+}
+
+function recomputeTurnTotals(
+  turnId: string,
+  sessionId: string,
+  store: Store,
+  emitter?: (event: { type: string; data: unknown }) => void
+): void {
+  const existing = store.getTurn(turnId);
+  if (!existing) return;
+  const llmCalls = store.listLlmCalls(turnId);
+  const toolCalls = store.listToolCalls(turnId);
+  const updated: TurnRecord = {
+    ...existing,
+    llmRoundTrips: llmCalls.length,
+    promptTokens: llmCalls.reduce((s, c) => s + c.promptTokens, 0),
+    completionTokens: llmCalls.reduce((s, c) => s + c.completionTokens, 0),
+    reasoningTokens: llmCalls.reduce((s, c) => s + c.reasoningTokens, 0),
+    cacheReadTokens: llmCalls.reduce((s, c) => s + c.cacheReadTokens, 0),
+    cacheWriteTokens: llmCalls.reduce((s, c) => s + c.cacheWriteTokens, 0),
+    cost: llmCalls.reduce((s, c) => s + c.cost, 0),
+  };
+  store.upsertTurn(updated);
+  emitter?.({ type: "turn", data: updated });
 }
 
 // ── LLM call processing ───────────────────────────────────────────────────────

@@ -29,6 +29,12 @@ export interface ResolvedConfig {
   hideOutputs: boolean;
   hideInputMessages: boolean;
   hideOutputMessages: boolean;
+  /**
+   * If set, every OTLP export batch is appended as a newline-delimited JSON
+   * record to this file path. Useful for capturing real traces as test fixtures.
+   * Also controllable via AGENT_PROFILER_TRACE_LOG env var.
+   */
+  traceLog: string | undefined;
 }
 
 const DEFAULTS: ResolvedConfig = {
@@ -46,6 +52,7 @@ const DEFAULTS: ResolvedConfig = {
   hideOutputs: false,
   hideInputMessages: false,
   hideOutputMessages: false,
+  traceLog: undefined,
 };
 
 function envBool(name: string): boolean | undefined {
@@ -132,6 +139,9 @@ export function resolveConfig(options?: Record<string, unknown>): ResolvedConfig
         o["hideOutputMessages"] as boolean | undefined,
         envBool("OPENINFERENCE_HIDE_OUTPUT_MESSAGES"),
       ) ?? DEFAULTS.hideOutputMessages,
+    traceLog:
+      pick(o["traceLog"] as string | undefined, process.env["AGENT_PROFILER_TRACE_LOG"]) ??
+      DEFAULTS.traceLog,
   };
 
   return cfg;

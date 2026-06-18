@@ -22,6 +22,7 @@ import { setStr, safeJson, toValueAndMime } from "../attributes.js";
 export interface OpenToolArgs {
   tracer: Tracer;
   parent: Span;
+  sessionID: string;
   tool: string;
   callID: string;
   args?: unknown;
@@ -35,7 +36,7 @@ export interface OpenToolResult {
 }
 
 export function openToolSpan(opts: OpenToolArgs): OpenToolResult {
-  const { tracer, parent, tool, callID, args, mcpServers, config } = opts;
+  const { tracer, parent, sessionID, tool, callID, args, mcpServers, config } = opts;
   const identity = classifyTool({ tool, args, mcpServers });
 
   const ctx: Context = trace.setSpan(otelContext.active(), parent);
@@ -45,6 +46,7 @@ export function openToolSpan(opts: OpenToolArgs): OpenToolResult {
     SemanticConventions.OPENINFERENCE_SPAN_KIND,
     OpenInferenceSpanKind.TOOL,
   );
+  span.setAttribute(SemanticConventions.SESSION_ID, sessionID);
   span.setAttribute(SemanticConventions.TOOL_NAME, identity.displayName);
   span.setAttribute(SemanticConventions.TOOL_ID, callID);
   if (identity.tags.length > 0) {

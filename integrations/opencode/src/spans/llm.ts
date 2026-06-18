@@ -23,6 +23,7 @@ import { setStr, setNum, safeJson } from "../attributes.js";
 export interface OpenLlmArgs {
   tracer: Tracer;
   parent: Span;
+  sessionID: string;
   modelID: string;
   providerID: string;
   invocationParams?: Record<string, unknown>;
@@ -30,7 +31,7 @@ export interface OpenLlmArgs {
 }
 
 export function openLlmSpan(args: OpenLlmArgs): Span {
-  const { tracer, parent, modelID, providerID, invocationParams, config } = args;
+  const { tracer, parent, sessionID, modelID, providerID, invocationParams, config } = args;
   const ctx: Context = trace.setSpan(otelContext.active(), parent);
   const span = tracer.startSpan(`chat ${modelID}`, undefined, ctx);
 
@@ -38,6 +39,7 @@ export function openLlmSpan(args: OpenLlmArgs): Span {
     SemanticConventions.OPENINFERENCE_SPAN_KIND,
     OpenInferenceSpanKind.LLM,
   );
+  span.setAttribute(SemanticConventions.SESSION_ID, sessionID);
   span.setAttribute(SemanticConventions.LLM_MODEL_NAME, modelID);
 
   const { provider, system } = mapProvider(providerID);

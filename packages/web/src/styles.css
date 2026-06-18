@@ -66,6 +66,21 @@
   ::-webkit-scrollbar-thumb:hover { background: var(--color-muted-foreground); }
 }
 
+/* ── Short-form aliases for SVG / inline-style usage ─────────────────────── */
+/* App.tsx uses hsl(var(--primary)) etc. in SVG attributes and inline styles. */
+/* Tailwind v4 only generates --color-* names, so we alias them here.         */
+
+:root {
+  --primary:          var(--color-primary);
+  --secondary:        var(--color-secondary);
+  --border:           var(--color-border);
+  --green:            var(--color-green);
+  --amber:            var(--color-amber);
+  --red:              var(--color-red);
+  --purple:           var(--color-purple);
+  --muted-foreground: var(--color-muted-foreground);
+}
+
 /* ── Chart helpers ────────────────────────────────────────────────────────── */
 
 .waterfall-bar-llm  { background: var(--color-primary); }
