@@ -66,14 +66,17 @@ no `NPM_TOKEN` secret needed in GitHub, no long-lived credentials anywhere.
 
 ## 3. Tag and publish via CI
 
+The tag is the single source of truth for the version. CI stamps `package.json`
+automatically from the tag name — you never need to edit `package.json` manually.
+
 - [ ] Commit any outstanding changes and push to `main`
-- [ ] Create and push the release tag — the publish workflow fires on this:
+- [ ] Create and push the release tag:
   ```bash
   git tag opencode-agent-profiler@<version>
   git push origin opencode-agent-profiler@<version>
   ```
 - [ ] In GitHub, go to **Actions → Publish opencode-agent-profiler** and confirm the
-  workflow run passes all steps (install → build → typecheck → test → npm publish)
+  workflow run passes all steps (install → stamp version → build → typecheck → test → npm publish)
 - [ ] Verify the package is live:
   ```bash
   npm show opencode-agent-profiler
@@ -145,5 +148,3 @@ This simulates a new user who installs the plugin before starting agent-profiler
 ## 7. Post-release
 
 - [ ] Create a GitHub Release from the tag with a short changelog in the release notes
-- [ ] Update `integrations/opencode/package.json` version to `<next>-dev` on `main` so
-  the next release tag is unambiguous
