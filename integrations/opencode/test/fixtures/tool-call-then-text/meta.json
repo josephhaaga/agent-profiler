@@ -1,0 +1,7 @@
+{
+  "recordedAt": "2026-06-18T21:52:18.766Z",
+  "mode": "stub",
+  "scenario": "tool-call-then-text",
+  "model": "stub/stub-model",
+  "prompt": "Say the word PING and nothing else."
+}

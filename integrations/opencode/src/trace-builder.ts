@@ -65,12 +65,12 @@ interface SessionState {
   /**
    * Open LLM spans keyed by the user messageID that triggered them
    * (== input.message.id in chat.params == assistant.parentID in message.updated).
-   * This replaces the FIFO queue which assumed chat.params fires before
-   * message.updated — that ordering is not guaranteed in opencode ≥1.17.
+   * Stored as a QUEUE per user-message-ID because a single user turn can
+   * generate multiple sequential LLM requests (e.g. a tool-call loop emits
+   * one chat.params for the tool-call response, then another for the text
+   * response, both with the same user message ID).
    */
-  llmMap: Map<string, OpenLlm>;
-  /** Fallback FIFO for cases where the message ID is unavailable. */
-  llmQueue: OpenLlm[];
+  llmMap: Map<string, OpenLlm[]>;
   /** Open tool spans keyed by callID. */
   tools: Map<string, OpenTool>;
   /** Buffered pre-request context for the next LLM span. */
@@ -79,8 +79,8 @@ interface SessionState {
   /** Accumulated assistant text keyed by assistant messageID. */
   assistantText: Map<string, string>;
   /**
-   * Set to true when endSession was called while llmMap/llmQueue were
-   * non-empty. The session stays alive until both drain, then auto-closes.
+   * Set to true when endSession was called while llmMap was
+   * non-empty. The session stays alive until the map drains, then auto-closes.
    */
   draining?: boolean;
   drainingErrored?: boolean;
@@ -132,7 +132,6 @@ export class TraceBuilder {
         agent,
         turns: new Map(),
         llmMap: new Map(),
-        llmQueue: [],
         tools: new Map(),
         assistantText: new Map(),
         draining: false,
@@ -153,7 +152,7 @@ export class TraceBuilder {
     // If there are LLM spans still awaiting their message.updated token data,
     // mark the session as draining rather than force-closing it. The session
     // will be cleaned up by onMessageUpdated once the map empties.
-    if (s.llmMap.size > 0 || s.llmQueue.length > 0) {
+    if (s.llmMap.size > 0) {
       s.draining = true;
       s.drainingErrored = errored;
       return;
@@ -167,14 +166,10 @@ export class TraceBuilder {
       closeToolSpan(t.span, { identity: t.identity, errored: true, config: this.config });
     }
     s.tools.clear();
-    for (const l of s.llmMap.values()) {
-      l.span.end();
+    for (const queue of s.llmMap.values()) {
+      for (const l of queue) l.span.end();
     }
     s.llmMap.clear();
-    for (const l of s.llmQueue) {
-      l.span.end();
-    }
-    s.llmQueue = [];
     for (const turn of s.turns.values()) {
       closeTurnSpan(turn.span, { outputText: turn.finalText, errored, config: this.config });
     }
@@ -304,13 +299,20 @@ export class TraceBuilder {
     session.pendingSystem = undefined;
     session.pendingMessages = undefined;
 
-    // Key by the user message ID so onMessageUpdated can look it up by
-    // assistant.parentID without relying on FIFO ordering.
+    // Push to the per-user-message queue. A single user turn can produce
+    // multiple sequential LLM calls (tool-call loop), all with the same
+    // turnMessageID. We store them as a FIFO so onMessageUpdated dequeues
+    // the oldest one on each terminal response.
     const llmEntry = { span, createdAt: Date.now() };
     if (turnMessageID) {
-      session.llmMap.set(turnMessageID, llmEntry);
+      const queue = session.llmMap.get(turnMessageID) ?? [];
+      queue.push(llmEntry);
+      session.llmMap.set(turnMessageID, queue);
     } else {
-      session.llmQueue.push(llmEntry);
+      // No message ID: fall back to a synthetic "unknown" key queue.
+      const queue = session.llmMap.get("") ?? [];
+      queue.push(llmEntry);
+      session.llmMap.set("", queue);
     }
   }
 
@@ -355,13 +357,19 @@ export class TraceBuilder {
 
     const assistantText = session.assistantText.get(assistant.id);
 
-    // Look up the open LLM span by parentID (the user message that triggered
-    // this LLM call). Fall back to FIFO for spans opened without a message ID.
-    const open =
+    // Dequeue the oldest open LLM span for this user message ID (FIFO).
+    // A tool-call loop generates multiple chat.params for the same parentID;
+    // each terminal message.updated closes the next span in the queue.
+    const queue =
       session.llmMap.get(assistant.parentID) ??
-      session.llmQueue.shift();
-    if (open) {
+      session.llmMap.get(""); // fallback: no-ID queue
+    const open = queue?.shift();
+    // Clean up empty queues.
+    if (queue?.length === 0) {
       session.llmMap.delete(assistant.parentID);
+      session.llmMap.delete(""); // also clean up fallback if that's what we used
+    }
+    if (open) {
       const outputMessage: OIMessage = {
         role: "assistant",
         content: assistantText,
@@ -376,7 +384,7 @@ export class TraceBuilder {
       // A turn is "done" when its terminal assistant message arrives and no
       // tools remain mid-flight. Tool-use loops emit multiple assistant
       // messages; we only close when nothing is pending.
-      if (turn.pendingTools.size === 0 && session.llmMap.size === 0 && session.llmQueue.length === 0) {
+      if (turn.pendingTools.size === 0 && session.llmMap.size === 0) {
         closeTurnSpan(turn.span, {
           outputText: turn.finalText,
           errored: Boolean(assistant.error),
@@ -388,7 +396,7 @@ export class TraceBuilder {
     }
 
     // If the session was waiting to drain before closing, do so now.
-    if (session.draining && session.llmMap.size === 0 && session.llmQueue.length === 0) {
+    if (session.draining && session.llmMap.size === 0) {
       this._closeSession(session, assistant.sessionID, session.drainingErrored ?? false);
     }
   }
@@ -455,19 +463,19 @@ export class TraceBuilder {
           }
         }
       }
-      s.llmQueue = s.llmQueue.filter((l) => {
-        if (now - l.createdAt > maxAge) {
-          l.span.setAttribute("opencode.timeout", true);
-          l.span.end();
-          return false;
-        }
-        return true;
-      });
-      for (const [mid, l] of s.llmMap) {
-        if (now - l.createdAt > maxAge) {
-          l.span.setAttribute("opencode.timeout", true);
-          l.span.end();
+      for (const [mid, queue] of s.llmMap) {
+        const remaining = queue.filter((l) => {
+          if (now - l.createdAt > maxAge) {
+            l.span.setAttribute("opencode.timeout", true);
+            l.span.end();
+            return false;
+          }
+          return true;
+        });
+        if (remaining.length === 0) {
           s.llmMap.delete(mid);
+        } else {
+          s.llmMap.set(mid, remaining);
         }
       }
       for (const [mid, turn] of s.turns) {
@@ -482,7 +490,6 @@ export class TraceBuilder {
         now - s.createdAt > maxAge &&
         s.tools.size === 0 &&
         s.llmMap.size === 0 &&
-        s.llmQueue.length === 0 &&
         s.turns.size === 0
       ) {
         s.span.setAttribute("opencode.timeout", true);

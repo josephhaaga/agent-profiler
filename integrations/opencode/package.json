@@ -33,7 +33,9 @@
   ],
   "scripts": {
     "build": "bunx tsc -p tsconfig.json",
-    "typecheck": "bunx tsc -p tsconfig.json --noEmit"
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit",
+    "test:e2e": "bun run test/harness/run-e2e.ts",
+    "test:e2e:record": "bun run test/harness/run-e2e.ts --record"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.17.0"

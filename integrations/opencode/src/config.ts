@@ -35,6 +35,14 @@ export interface ResolvedConfig {
    * Also controllable via AGENT_PROFILER_TRACE_LOG env var.
    */
   traceLog: string | undefined;
+  /**
+   * If set, every hook invocation is appended as a newline-delimited JSON
+   * record to this file path. Records have shape:
+   *   { ts, hook, input, output }
+   * Useful for capturing real hook event sequences as test fixtures.
+   * Also controllable via AGENT_PROFILER_HOOK_LOG env var.
+   */
+  hookLog: string | undefined;
 }
 
 const DEFAULTS: ResolvedConfig = {
@@ -53,6 +61,7 @@ const DEFAULTS: ResolvedConfig = {
   hideInputMessages: false,
   hideOutputMessages: false,
   traceLog: undefined,
+  hookLog: undefined,
 };
 
 function envBool(name: string): boolean | undefined {
@@ -142,6 +151,9 @@ export function resolveConfig(options?: Record<string, unknown>): ResolvedConfig
     traceLog:
       pick(o["traceLog"] as string | undefined, process.env["AGENT_PROFILER_TRACE_LOG"]) ??
       DEFAULTS.traceLog,
+    hookLog:
+      pick(o["hookLog"] as string | undefined, process.env["AGENT_PROFILER_HOOK_LOG"]) ??
+      DEFAULTS.hookLog,
   };
 
   return cfg;

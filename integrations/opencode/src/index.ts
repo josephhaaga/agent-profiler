@@ -27,6 +27,7 @@
  * the health check (/healthz) this plugin targets.
  */
 import type { Plugin, Hooks, PluginInput, PluginOptions } from "@opencode-ai/plugin";
+import { appendFileSync } from "node:fs";
 import { resolveConfig } from "./config.js";
 import { initOtel } from "./otel.js";
 import { applyRedactionEnv } from "./redaction.js";
@@ -131,10 +132,19 @@ export const AgentProfilerPlugin: Plugin = async (
 
   /**
    * Wrap a hook body so it can never throw into OpenCode.
+   * When hookLog is configured, appends { ts, hook, input, output } as NDJSON.
    */
   const guard =
     (name: string, fn: (input: any, output: any) => void) =>
     async (...args: any[]): Promise<void> => {
+      if (config.hookLog) {
+        try {
+          const record = JSON.stringify({ ts: Date.now(), hook: name, input: args[0] ?? null, output: args[1] ?? null });
+          appendFileSync(config.hookLog, record + "\n");
+        } catch {
+          /* never break a hook due to logging */
+        }
+      }
       try {
         fn(args[0], args[1]);
       } catch (err) {

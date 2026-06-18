@@ -1,0 +1,14 @@
+{
+  "model": "stub-model",
+  "turns": [
+    {
+      "content": "Hello! I can help you with that.",
+      "usage": {
+        "prompt_tokens": 50,
+        "completion_tokens": 10,
+        "total_tokens": 60,
+        "cache_read_tokens": 0
+      }
+    }
+  ]
+}
