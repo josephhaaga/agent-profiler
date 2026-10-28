@@ -31,6 +31,9 @@
       "bin": {
         "agent-profiler": "./dist/index.js",
       },
+      "dependencies": {
+        "@opencode/client": "2.2.0",
+      },
       "devDependencies": {
         "@types/node": "^22",
       },

@@ -4,6 +4,7 @@ import { analyzeCompare, runProfilers } from "@agent-profiler/profiler";
 import { Store } from "@agent-profiler/store";
 import { join } from "path";
 import { homedir } from "os";
+import { importOpenCodeExport, validateExport } from "./import-opencode";
 
 // Default DB path: ~/.agent-profiler/agent-profiler.sqlite so it persists across
 // working directories when run via `agent-profiler start`. Overridable via env.
@@ -137,7 +138,7 @@ const server = Bun.serve({
       }
 
       try {
-        const result = await ingestOtlpPayload(payload, store, (event) => broadcast(event.type, event.data));
+        const result = await ingestOtlpPayload(payload, store, (event) => broadcast(event.type, store.present(event.data as { id: string })));
         console.log(`[ingest] sessions=${result.sessionsUpserted} turns=${result.turnsUpserted} llm=${result.llmCallsUpserted} tools=${result.toolCallsUpserted}`);
 
         // Run profilers for each new session (fire and forget)
@@ -165,22 +166,36 @@ const server = Bun.serve({
 
     // ── Sessions API ─────────────────────────────────────────────────────────
 
+    if (pathname === "/api/import/opencode" && req.method === "POST") {
+      let data: unknown;
+      try { data = await req.json(); validateExport(data); }
+      catch { return json({ error: "Invalid OpenCode V2 export" }, 400); }
+      try {
+        const result = importOpenCodeExport(data, store);
+        broadcast("session", store.present(store.getSession(result.sessionId)!));
+        return json(result);
+      } catch (error) {
+        console.error("[import] failed:", error instanceof Error ? error.name : "unknown error");
+        return json({ error: "Import failed; session changes rolled back" }, 500);
+      }
+    }
+
     if (pathname === "/api/sessions" && req.method === "GET") {
       const limit = Number(url.searchParams.get("limit") ?? 100);
-      return json({ sessions: store.listSessions(limit) });
+      return json({ sessions: store.listSessions(limit).map(s => store.present(s)) });
     }
 
     const sessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)$/);
     if (sessionMatch && req.method === "GET") {
       const id = sessionMatch[1]!;
       const session = store.getSession(id);
-      return session ? json({ session }) : notFound();
+      return session ? json({ session: store.present(session) }) : notFound();
     }
 
     const sessionTurnsMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/turns$/);
     if (sessionTurnsMatch && req.method === "GET") {
       const id = sessionTurnsMatch[1]!;
-      return json({ turns: store.listTurns(id) });
+      return json({ turns: store.listTurns(id).map(t => store.present(t)) });
     }
 
     const sessionInsightsMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/insights$/);
@@ -195,19 +210,19 @@ const server = Bun.serve({
     if (turnMatch && req.method === "GET") {
       const id = turnMatch[1]!;
       const turn = store.getTurn(id);
-      return turn ? json({ turn }) : notFound();
+      return turn ? json({ turn: store.present(turn) }) : notFound();
     }
 
     const turnLlmMatch = pathname.match(/^\/api\/turns\/([^/]+)\/llm-calls$/);
     if (turnLlmMatch && req.method === "GET") {
       const id = turnLlmMatch[1]!;
-      return json({ llmCalls: store.listLlmCalls(id) });
+      return json({ llmCalls: store.listLlmCalls(id).map(c => store.present(c)) });
     }
 
     const turnToolsMatch = pathname.match(/^\/api\/turns\/([^/]+)\/tool-calls$/);
     if (turnToolsMatch && req.method === "GET") {
       const id = turnToolsMatch[1]!;
-      return json({ toolCalls: store.listToolCalls(id) });
+      return json({ toolCalls: store.listToolCalls(id).map(c => store.present(c)) });
     }
 
     // ── LLM Calls API ─────────────────────────────────────────────────────────

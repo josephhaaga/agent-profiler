@@ -238,10 +238,51 @@ export class Store {
         created_at text not null
       );
       create index if not exists insights_scope_idx on insights(scope_type, scope_id);
+      create table if not exists record_capture (
+        id text primary key,
+        capture_json text not null
+      );
+      create table if not exists span_aliases (
+        span_id text primary key,
+        record_id text not null
+      );
     `);
   }
 
   // ── Sessions ──────────────────────────────────────────────────────────────
+
+  setCapture(id: string, capture: Record<string, unknown>): void {
+    this.db.query(`insert into record_capture values (?, ?) on conflict(id) do update set capture_json=excluded.capture_json`)
+      .run(id, JSON.stringify(capture));
+  }
+
+  resolveSpanId(id: string): string {
+    const row = this.db.query(`select record_id from span_aliases where span_id=?`).get(id) as { record_id: string } | null;
+    return row?.record_id ?? id;
+  }
+
+  registerSpanId(spanId: string, recordId: string): void {
+    this.db.query(`insert into span_aliases values (?, ?) on conflict(span_id) do update set record_id=excluded.record_id`).run(spanId, recordId);
+    // Children may flush before their parent supplies its source ID.
+    this.db.query(`update llm_calls set turn_id=? where turn_id=?`).run(recordId, spanId);
+    this.db.query(`update tool_calls set turn_id=? where turn_id=?`).run(recordId, spanId);
+  }
+
+  getCapture(id: string): Record<string, unknown> | undefined {
+    const row = this.db.query(`select capture_json from record_capture where id=?`).get(id) as { capture_json: string } | null;
+    return row ? JSON.parse(row.capture_json) : undefined;
+  }
+
+  present<T extends { id: string }>(record: T): { [K in keyof T]: T[K] extends number ? T[K] | null : T[K] } & { capture?: Record<string, unknown> } {
+    // Numeric storage fields are aggregation accumulators, not evidence that
+    // usage was recorded. HTTP/SSE boundaries must apply coverage before display.
+    const capture = this.getCapture(record.id);
+    const result = { ...record, ...(capture ? { capture } : {}) };
+    for (const key of (capture?.unknownMetrics ?? []) as string[]) {
+      (result as Record<string, unknown>)[key] = null;
+    }
+    return result;
+  }
 
   upsertSession(session: SessionRecord): void {
     this.db.query(`

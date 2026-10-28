@@ -64,7 +64,54 @@ agent-profiler status      Show running/stopped, PID, and health
 agent-profiler logs        Print the last 100 lines of server logs
 agent-profiler logs -f     Tail server logs (follow mode)
 agent-profiler open        Open the web UI in your browser
+agent-profiler import opencode   Import historical OpenCode V2 sessions
 ```
+
+### Import existing OpenCode sessions
+
+With the collector and OpenCode service running:
+
+```bash
+agent-profiler import opencode
+# Or import just one session:
+agent-profiler import opencode --session ses_...
+```
+
+The importer reads OpenCode's session export API, not its SQLite tables. It
+pages through active and archived sessions and groups records under the **original OpenCode
+session ID**. Repeating an import is safe. Live and imported calls share source
+message/tool IDs, and live prompt evidence is preserved.
+
+Use `--endpoint http://127.0.0.1:7070` to select a collector (base URL, not
+`/v1/traces`). By default the CLI discovers and authenticates to the local
+OpenCode service without starting it. Use `--opencode-url URL` for an explicit
+service, with `OPENCODE_TOKEN` if it requires bearer authentication. Both the
+CLI and collector must be upgraded to a version supporting import.
+
+Imported history is labeled **partial**:
+
+- Recorded input/output/reasoning tokens, cache reads/writes, cost, model,
+  assistant output, and assistant tool inputs/results are retained when present.
+- Unknown metrics are `null` in the REST API and shown as **Unknown** in the UI;
+  recorded zeros stay zero. Aggregate metrics are unknown if any contributing
+  call lacks that metric. Incomplete sessions are excluded from numeric
+  recommendations and comparisons rather than treated as zero.
+- OpenCode V2 input excludes cache tokens; profiler prompt input includes input
+  plus cache reads and writes. Cached-input share is cache reads divided by that
+  prompt total, not a diagnosis of provider-side cache misses.
+- Exact outgoing prompts, provider retries, historical tool inventories, and
+  detailed network timing are not reconstructed. Recorded cost is not necessarily
+  billed spend, especially with subscription/OAuth providers.
+- Older collector records without retained source message IDs cause that session
+  to be **explicitly skipped**; matching by text or timing would risk duplicates.
+
+The collector stores a lossless exported-session snapshot, referenced by
+`session.capture.sourceRef`, including synthetic/metadata messages that do not
+appear as model calls. Import includes unredacted saved content and does **not**
+apply the live plugin's content-redaction settings. Keep the collector and its
+database private. OpenCode's source database is never modified. A session is
+written atomically; if a later session fails, earlier successful imports remain
+and rerunning the command resumes safely through deduplication.
 
 ## Plugin options
 
@@ -151,6 +198,7 @@ integrations/
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/traces` | OTLP/HTTP-JSON trace ingest |
+| `POST` | `/api/import/opencode` | Import a native V2 `{info, messages}` session export |
 | `GET` | `/api/sessions` | List sessions (`?limit=`) |
 | `GET` | `/api/sessions/:id` | Session detail |
 | `GET` | `/api/sessions/:id/turns` | Turns for a session |
@@ -189,7 +237,8 @@ concurrent sessions and tool loops. Model latency ends at the provider response
 boundary, not after its tools finish. Each loaded location has an independent
 exporter that flushes when the plugin unloads.
 
-Capture starts when the plugin loads; it does not backfill earlier sessions.
+Live capture starts when the plugin loads; use `agent-profiler import opencode`
+to backfill earlier sessions separately.
 Auxiliary title, compaction, and transient generation model calls are not yet
 instrumented. Prompt token estimates in segments are character-based estimates,
 not provider billing counts. Long content is bounded by `maxAttrChars`.

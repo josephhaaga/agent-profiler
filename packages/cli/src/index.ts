@@ -14,6 +14,7 @@ import { spawn, spawnSync } from "child_process";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
+import { importOpenCode } from "./import.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -217,6 +218,8 @@ Commands:
   status         Show whether the server is running
   logs [-f]      Print server logs (-f to follow/tail)
   open           Open the web UI in your browser
+  import opencode [--session ID] [--opencode-url URL] [--endpoint URL]
+                 Import saved OpenCode V2 sessions (read-only source)
 
 Environment:
   AGENT_PROFILER_PORT     Server port (default: 7070)
@@ -229,6 +232,15 @@ Environment:
 const [,, cmd, ...rest] = process.argv;
 
 switch (cmd) {
+  case "import":
+    try {
+      if (rest[0] !== "opencode") throw new Error("Usage: agent-profiler import opencode [--session ID] [--opencode-url URL] [--endpoint URL]");
+      await importOpenCode(rest.slice(1), port);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+    break;
   case "start":  await cmdStart(); break;
   case "stop":   await cmdStop();  break;
   case "status": await cmdStatus(); break;

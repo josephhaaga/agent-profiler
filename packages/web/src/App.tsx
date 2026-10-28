@@ -22,16 +22,20 @@ import { cn } from "@/lib/utils";
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
-function fmt(n: number, decimals = 0): string {
+function fmt(n: number | null, decimals = 0): string {
+  if (n == null || !Number.isFinite(n)) return "Unknown";
   return n.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
-function fmtMs(ms: number): string {
+function fmtMs(ms: number | null): string {
+  if (ms == null || !Number.isFinite(ms)) return "Unknown";
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
-function fmtCost(c: number): string {
+function fmtCost(c: number | null): string {
+  if (c == null || !Number.isFinite(c)) return "Unknown";
   return c < 0.001 ? `$${(c * 1000).toFixed(3)}m` : `$${c.toFixed(4)}`;
 }
 function fmtRatio(r: number): string {
+  if (!Number.isFinite(r)) return "Unknown";
   return `${(r * 100).toFixed(1)}%`;
 }
 function ago(iso: string): string {
@@ -41,7 +45,8 @@ function ago(iso: string): string {
   if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
   return new Date(iso).toLocaleDateString();
 }
-function cacheRatio(s: { promptTokens: number; cacheReadTokens: number }): number {
+function cacheRatio(s: { promptTokens: number | null; cacheReadTokens: number | null }): number {
+  if (s.promptTokens == null || s.cacheReadTokens == null) return NaN;
   return s.promptTokens > 0 ? s.cacheReadTokens / s.promptTokens : 0;
 }
 
@@ -247,7 +252,7 @@ function SessionsView({ onSelect }: { onSelect: (id: string) => void }) {
                     <TableCell>
                       <span className={cn(
                         "tabular-nums font-medium",
-                        hit > 0.5 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--amber))]"
+                        !Number.isFinite(hit) ? "text-muted-foreground" : hit > 0.5 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--amber))]"
                       )}>
                         {fmtRatio(hit)}
                       </span>
@@ -292,15 +297,15 @@ function SessionTimeline({
   const TOTAL_H = BAR_H + LINE_H;
   const padL = 36, padR = 8, padTop = 8, labelH = 20;
 
-  const maxCost = Math.max(...turns.map((t) => t.cost), 0.0001);
+  const maxCost = Math.max(...turns.map((t) => t.cost ?? 0), 0.0001);
   const maxTools = Math.max(...turns.map((t) => t.llmRoundTrips), 1);
   const n = turns.length;
 
   // Colour thresholds
   function barColor(t: TurnRecord) {
-    const ratio = t.promptTokens > 0 ? t.cacheReadTokens / t.promptTokens : 0;
+    const ratio = cacheRatio(t);
     if (ratio > 0.5) return "hsl(var(--green))";
-    if (t.cost / maxCost > 0.6) return "hsl(var(--red))";
+    if (t.cost != null && t.cost / maxCost > 0.6) return "hsl(var(--red))";
     return "hsl(var(--primary))";
   }
 
@@ -312,7 +317,8 @@ function SessionTimeline({
   const polyline = turns
     .map((t, i) => {
       const cx = padL + i * w + w / 2;
-      const ratio = t.promptTokens > 0 ? t.cacheReadTokens / t.promptTokens : 0;
+      const ratio = cacheRatio(t);
+      if (!Number.isFinite(ratio)) return "";
       const y = padTop + BAR_H + LINE_H * (1 - ratio);
       return `${cx},${y}`;
     })
@@ -372,6 +378,7 @@ function SessionTimeline({
 
           {/* Bars */}
           {turns.map((t, i) => {
+            if (t.cost == null) return null;
             const bh = Math.max(2, (t.cost / maxCost) * BAR_H);
             const x = padL + i * w + w * 0.15;
             const bw = w * 0.7;
@@ -403,7 +410,8 @@ function SessionTimeline({
             opacity={0.9}
           />
           {turns.map((t, i) => {
-            const ratio = t.promptTokens > 0 ? t.cacheReadTokens / t.promptTokens : 0;
+            const ratio = cacheRatio(t);
+            if (!Number.isFinite(ratio)) return null;
             const cx = padL + i * w + w / 2;
             const cy = padTop + BAR_H + LINE_H * (1 - ratio);
             return (
@@ -422,6 +430,7 @@ function SessionTimeline({
 
           {/* Tool call dots (above bars) */}
           {turns.map((t, i) => {
+            if (t.cost == null) return null;
             const cx = padL + i * w + w / 2;
             const r = 2 + (t.llmRoundTrips / maxTools) * 3;
             const bh = Math.max(2, (t.cost / maxCost) * BAR_H);
@@ -516,12 +525,13 @@ function SessionDetailView({
   });
 
   // Find peak cost turn for narrative headline
-  const peakTurn = turns.length > 0 ? turns.reduce((a, b) => (b.cost > a.cost ? b : a)) : null;
-  const peakFrac = peakTurn && session.costTotal > 0 ? peakTurn.cost / session.costTotal : 0;
+  const knownCostTurns = turns.filter((t): t is TurnRecord & { cost: number } => t.cost != null);
+  const peakTurn = knownCostTurns.length > 0 ? knownCostTurns.reduce((a, b) => (b.cost > a.cost ? b : a)) : null;
+  const peakFrac = peakTurn && session.costTotal != null && session.costTotal > 0 ? peakTurn.cost / session.costTotal : 0;
   const lowestCacheTurn = turns.length > 0
     ? turns.reduce((a, b) => {
-        const ra = a.promptTokens > 0 ? a.cacheReadTokens / a.promptTokens : 1;
-        const rb = b.promptTokens > 0 ? b.cacheReadTokens / b.promptTokens : 1;
+        const ra = cacheRatio(a);
+        const rb = cacheRatio(b);
         return rb < ra ? b : a;
       })
     : null;
@@ -542,6 +552,12 @@ function SessionDetailView({
       </div>
 
       {/* Tufte: headline narrative first, then supporting data */}
+      {session.capture?.partial && (
+        <p className="text-sm text-muted-foreground">
+          Imported history (partial). Exact outgoing prompts and historical tool schemas are unavailable.
+          Missing usage is shown as Unknown, not zero. Recorded cost is not necessarily billed spend.
+        </p>
+      )}
       {peakTurn && peakFrac > 0.25 && (
         <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-foreground">
           Turn {peakTurn.idx + 1} consumed{" "}
@@ -550,7 +566,7 @@ function SessionDetailView({
             <>
               {". "}Lowest cache efficiency at turn {lowestCacheTurn.idx + 1}{" "}
               <span className="font-semibold text-[hsl(var(--red))]">
-                ({fmtRatio(lowestCacheTurn.promptTokens > 0 ? lowestCacheTurn.cacheReadTokens / lowestCacheTurn.promptTokens : 0)})
+                ({fmtRatio(cacheRatio(lowestCacheTurn))})
               </span>
             </>
           )}.
@@ -576,7 +592,7 @@ function SessionDetailView({
       <MetricRow
         metrics={[
           { label: "Cost", value: fmtCost(session.costTotal) },
-          { label: "Cache hit", value: fmtRatio(hitRatio), highlight: hitRatio < 0.3 ? "warn" : "ok" },
+          { label: "Cache hit", value: fmtRatio(hitRatio), highlight: !Number.isFinite(hitRatio) ? undefined : hitRatio < 0.3 ? "warn" : "ok" },
           { label: "Prompt tok", value: fmt(session.promptTokens) },
           { label: "Turns", value: fmt(session.turnCount) },
           { label: "Tool calls", value: fmt(session.toolCallCount) },
@@ -612,7 +628,7 @@ function SessionDetailView({
             </TableHeader>
             <TableBody>
               {turns.map((t) => {
-                const tr = t.promptTokens > 0 ? t.cacheReadTokens / t.promptTokens : 0;
+                const tr = cacheRatio(t);
                 return (
                   <TableRow key={t.id} className="cursor-pointer" onClick={() => onTurnSelect(t.id)}>
                     <TableCell className="text-muted-foreground tabular-nums">{t.idx + 1}</TableCell>
@@ -623,7 +639,7 @@ function SessionDetailView({
                     <TableCell>
                       <span className={cn(
                         "tabular-nums",
-                        tr > 0.5 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--amber))]"
+                        !Number.isFinite(tr) ? "text-muted-foreground" : tr > 0.5 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--amber))]"
                       )}>
                         {fmtRatio(tr)}
                       </span>
@@ -633,6 +649,8 @@ function SessionDetailView({
                         <Badge variant="critical">error</Badge>
                       ) : t.endSignal === "user_stopped" ? (
                         <Badge variant="warn">stopped</Badge>
+                      ) : !t.endSignal ? (
+                        <span className="text-muted-foreground">Unknown</span>
                       ) : (
                         <Badge variant="ok">ok</Badge>
                       )}
@@ -693,13 +711,13 @@ function TurnDetailView({
     );
   }
 
-  type SpanItem = { type: "llm" | "tool"; id: string; name: string; latencyMs: number; record: LlmCallRecord | ToolCallRecord };
+  type SpanItem = { type: "llm" | "tool"; id: string; name: string; latencyMs: number | null; record: LlmCallRecord | ToolCallRecord };
   const spans: SpanItem[] = [
     ...llmCalls.map((c) => ({ type: "llm" as const, id: c.id, name: c.model, latencyMs: c.latencyMs, record: c })),
     ...toolCalls.map((c) => ({ type: "tool" as const, id: c.id, name: c.name, latencyMs: c.latencyMs, record: c })),
-  ].sort((a, b) => b.latencyMs - a.latencyMs);
+  ].sort((a, b) => (b.latencyMs ?? -1) - (a.latencyMs ?? -1));
 
-  const maxMs = spans.reduce((m, x) => Math.max(m, x.latencyMs), 1);
+  const maxMs = spans.reduce((m, x) => Math.max(m, x.latencyMs ?? 0), 1);
 
   function SpanDetail({ span }: { span: SpanItem }) {
     if (span.type === "llm") {
@@ -779,7 +797,7 @@ function TurnDetailView({
 
       <MetricRow metrics={[
         { label: "Cost", value: fmtCost(turn.cost) },
-        { label: "Cache hit", value: fmtRatio(turn.promptTokens > 0 ? turn.cacheReadTokens / turn.promptTokens : 0) },
+        { label: "Cache hit", value: fmtRatio(cacheRatio(turn)) },
         { label: "LLM calls", value: fmt(turn.llmRoundTrips) },
         { label: "Prompt tok", value: fmt(turn.promptTokens) },
         { label: "Completion tok", value: fmt(turn.completionTokens) },
@@ -821,7 +839,7 @@ function TurnDetailView({
           </div>
           <div className="space-y-1">
             {spans.map((span) => {
-              const pct = Math.max(2, (span.latencyMs / maxMs) * 100);
+              const pct = span.latencyMs == null ? 0 : Math.max(2, (span.latencyMs / maxMs) * 100);
               const isSelected = selectedSpan === span.id;
               return (
                 <div key={span.id} className="rounded-md overflow-hidden border border-transparent hover:border-border transition-colors">
@@ -881,10 +899,10 @@ function CachePanelView({ sessionId }: { sessionId: string }) {
   }
 
   const sessionHitRatio = cacheRatio(session);
-  const turnSeries = turns.map((t) => ({
+  const turnSeries = turns.filter(t => Number.isFinite(cacheRatio(t))).map((t) => ({
     idx: t.idx + 1,
     id: t.id,
-    ratio: t.promptTokens > 0 ? t.cacheReadTokens / t.promptTokens : 0,
+    ratio: cacheRatio(t),
     prompt: t.promptTokens,
   }));
 
@@ -900,7 +918,7 @@ function CachePanelView({ sessionId }: { sessionId: string }) {
       <h1 className="text-lg font-semibold">Cache Detail</h1>
 
       <MetricRow metrics={[
-        { label: "Overall hit ratio", value: fmtRatio(sessionHitRatio), highlight: sessionHitRatio > 0.5 ? "ok" : "warn" },
+        { label: "Overall hit ratio", value: fmtRatio(sessionHitRatio), highlight: !Number.isFinite(sessionHitRatio) ? undefined : sessionHitRatio > 0.5 ? "ok" : "warn" },
         { label: "Cache-read tok", value: fmt(session.cacheReadTokens) },
         { label: "Cache-write tok", value: fmt(session.cacheWriteTokens) },
       ]} />

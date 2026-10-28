@@ -31,5 +31,8 @@
   },
   "devDependencies": {
     "@types/node": "^22"
+  },
+  "dependencies": {
+    "@opencode/client": "2.2.0"
   }
 }

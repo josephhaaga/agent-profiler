@@ -220,6 +220,22 @@ export async function ingestOtlpPayload(
 
     if (!allSpans.length) continue;
 
+    if (harness === "opencode") {
+      for (const span of allSpans) {
+        const sessionId = str(span.attrs, "session.id");
+        if (!sessionId) continue;
+        let messageId: string | undefined;
+        try { messageId = JSON.parse(str(span.attrs, "metadata") ?? "{}").messageID; } catch { /* optional metadata */ }
+        const sourceId = span.kind === "tool" ? str(span.attrs, "tool.id") : messageId;
+        if (typeof sourceId === "string" && sourceId && ["chain", "turn", "llm", "tool"].includes(span.kind)) {
+          store.registerSpanId(span.id, `opencode:${sessionId}:${sourceId}`);
+        }
+      }
+      for (const span of allSpans) {
+        span.id = store.resolveSpanId(span.id);
+        if (span.parentId) span.parentId = store.resolveSpanId(span.parentId);
+      }
+    }
     const roots = buildTree(allSpans);
 
     for (const root of roots) {
@@ -393,7 +409,7 @@ async function processOrphanBatch(
 
   // Route by span kind: turn → processTurn, LLM/tool → processLlmCall/processToolCall
   if (kind === "chain" || kind === "turn") {
-    const idx = store.listTurns(sessionId).length;
+    const idx = store.getTurn(root.span.id)?.idx ?? store.listTurns(sessionId).length;
     await processTurn(root, sessionId, idx, store, result, emitter);
   } else {
     // Preserve the actual parent ID when children flush before their turn.
@@ -438,6 +454,8 @@ function recomputeSessionTotals(
     costTotal: llmCalls.reduce((s, c) => s + c.cost, 0),
   };
   store.upsertSession(updated);
+  const capture = store.getCapture(sessionId) ?? { source: "live", partial: false };
+  store.setCapture(sessionId, { ...capture, unknownMetrics: [...new Set(llmCalls.flatMap(c => (store.getCapture(c.id)?.unknownMetrics ?? []) as string[]))].filter(k => k !== "latencyMs").map(k => k === "cost" ? "costTotal" : k) });
   emitter?.({ type: "session", data: updated });
 }
 async function processTurn(
@@ -545,6 +563,7 @@ function recomputeTurnTotals(
     cost: llmCalls.reduce((s, c) => s + c.cost, 0),
   };
   store.upsertTurn(updated);
+  store.setCapture(turnId, { ...(store.getCapture(turnId) ?? { source: "live", partial: false }), unknownMetrics: [...new Set(llmCalls.flatMap(c => (store.getCapture(c.id)?.unknownMetrics ?? []) as string[]))].filter(k => k !== "latencyMs") });
   emitter?.({ type: "turn", data: updated });
 }
 
@@ -599,7 +618,26 @@ async function processLlmCall(
     outputRef,
   };
 
+  const metricAttrs: Record<string, string> = {
+    promptTokens: "llm.token_count.prompt", completionTokens: "llm.token_count.completion",
+    reasoningTokens: "llm.token_count.completion_details.reasoning", cacheReadTokens: "llm.token_count.prompt_details.cache_read",
+    cacheWriteTokens: "llm.token_count.prompt_details.cache_write", cost: "llm.cost.total",
+  };
+  const missing = Object.keys(metricAttrs).filter(key => attrs[metricAttrs[key]!] == null);
+  if (!span.endedAt) missing.push("latencyMs");
+  const previousCapture = store.getCapture(llmCall.id);
+  const previousCall = store.listLlmCallsBySession(sessionId).find(c => c.id === llmCall.id);
+  const previousMissing = (previousCapture?.unknownMetrics ?? []) as string[];
+  const unknownMetrics = missing.filter(key => !previousCall || previousMissing.includes(key));
+  if (previousCall) {
+    for (const key of missing.filter(k => !unknownMetrics.includes(k))) {
+      (llmCall as unknown as Record<string, unknown>)[key] = (previousCall as unknown as Record<string, unknown>)[key];
+    }
+    llmCall.outputRef ??= previousCall.outputRef;
+    llmCall.inputMessagesRef ??= previousCall.inputMessagesRef;
+  }
   store.upsertLlmCall(llmCall);
+  store.setCapture(llmCall.id, { source: "live", partial: false, unknownMetrics });
   result.llmCallsUpserted++;
   emitter?.({ type: "llm_call", data: llmCall });
 
@@ -755,6 +793,7 @@ async function processToolCall(
   };
 
   store.upsertToolCall(toolCall);
+  store.setCapture(toolCall.id, { source: "live", partial: false, unknownMetrics: span.endedAt ? [] : ["latencyMs"] });
   result.toolCallsUpserted++;
   emitter?.({ type: "tool_call", data: toolCall });
 }

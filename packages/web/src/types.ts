@@ -1,6 +1,17 @@
 export type HarnessKind = "opencode" | "vscode" | "custom";
 
-export interface SessionRecord {
+interface CaptureRecord {
+  capture?: { source: string; partial?: boolean; unknownMetrics?: string[] };
+}
+interface UsageRecord extends CaptureRecord {
+  promptTokens: number | null;
+  completionTokens: number | null;
+  reasoningTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+}
+
+export interface SessionRecord extends UsageRecord {
   id: string;
   harness: HarnessKind;
   agent?: string;
@@ -11,16 +22,11 @@ export interface SessionRecord {
   turnCount: number;
   llmCallCount: number;
   toolCallCount: number;
-  promptTokens: number;
-  completionTokens: number;
-  reasoningTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  costTotal: number;
+  costTotal: number | null;
   endReason?: string;
 }
 
-export interface TurnRecord {
+export interface TurnRecord extends UsageRecord {
   id: string;
   sessionId: string;
   idx: number;
@@ -29,36 +35,26 @@ export interface TurnRecord {
   startedAt: string;
   endedAt?: string;
   llmRoundTrips: number;
-  promptTokens: number;
-  completionTokens: number;
-  reasoningTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  cost: number;
+  cost: number | null;
   status?: string;
   endSignal?: "completed" | "user_stopped" | "error";
 }
 
-export interface LlmCallRecord {
+export interface LlmCallRecord extends UsageRecord {
   id: string;
   turnId: string;
   sessionId: string;
   model: string;
   provider?: string;
   paramsJson?: string;
-  promptTokens: number;
-  completionTokens: number;
-  reasoningTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  cost: number;
-  latencyMs: number;
+  cost: number | null;
+  latencyMs: number | null;
   finishReason?: string;
   inputMessagesRef?: string;
   outputRef?: string;
 }
 
-export interface ToolCallRecord {
+export interface ToolCallRecord extends CaptureRecord {
   id: string;
   turnId: string;
   sessionId: string;
@@ -68,7 +64,7 @@ export interface ToolCallRecord {
   skill?: string;
   argsRef?: string;
   outputRef?: string;
-  latencyMs: number;
+  latencyMs: number | null;
   tokensOutEst: number;
   status?: string;
 }

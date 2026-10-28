@@ -503,6 +503,8 @@ export function analyzeCompare(store: Store, harnessFilter?: string[]): CompareR
   // Group sessions by harness
   const byHarness = new Map<string, SessionRecord[]>();
   for (const s of sessions) {
+    if (((store.getCapture(s.id)?.unknownMetrics ?? []) as string[]).length) continue;
+    if (store.listLlmCallsBySession(s.id).some(c => ((store.getCapture(c.id)?.unknownMetrics ?? []) as string[]).length)) continue;
     if (harnessFilter && !harnessFilter.includes(s.harness)) continue;
     const existing = byHarness.get(s.harness) ?? [];
     existing.push(s);
@@ -613,16 +615,22 @@ export async function runProfilers(
   const session = store.getSession(sessionId);
   if (!session) return [];
 
-  const allSessions = store.listSessions(500);
+  const hasMissingMetrics = (id: string) => ((store.getCapture(id)?.unknownMetrics ?? []) as string[]).length > 0 ||
+    store.listLlmCallsBySession(id).some(c => ((store.getCapture(c.id)?.unknownMetrics ?? []) as string[]).length > 0);
+  const allSessions = store.listSessions(500).filter(s => !hasMissingMetrics(s.id));
   const allInsights: Insight[] = [];
 
   // Cache
-  const cache = analyzeCacheEfficiency(session, store);
-  allInsights.push(...cache.insights);
+  if (!hasMissingMetrics(sessionId)) {
+    const cache = analyzeCacheEfficiency(session, store);
+    allInsights.push(...cache.insights);
+  }
 
   // Attribution
-  const attr = analyzeAttribution(session, store);
-  allInsights.push(...attr.insights);
+  if (!hasMissingMetrics(sessionId)) {
+    const attr = analyzeAttribution(session, store);
+    allInsights.push(...attr.insights);
+  }
 
   // Composition: run for each LLM call in the session
   const llmCalls = store.listLlmCallsBySession(sessionId);
@@ -632,8 +640,10 @@ export async function runProfilers(
   }
 
   // Right-sizing
-  const rs = analyzeRightsizing(session, store, allSessions);
-  allInsights.push(...rs.insights);
+  if (!hasMissingMetrics(sessionId)) {
+    const rs = analyzeRightsizing(session, store, allSessions);
+    allInsights.push(...rs.insights);
+  }
 
   // Persist all insights
   for (const insight of allInsights) {
