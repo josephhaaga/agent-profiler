@@ -357,16 +357,21 @@ export class Store {
     });
   }
 
-  listSessions(limit = 50): SessionRecord[] {
+  listSessions(limit = 50, after?: { startedAt: string; id: string }): SessionRecord[] {
     const rows = this.db
       .query(`select s.*,
         (select count(*) from tool_calls t where t.session_id=s.id and t.status='ERROR') as tool_error_count,
         (select count(*) from llm_calls l left join record_capture c on c.id=l.id
           where l.session_id=s.id and (l.finish_reason='error' or json_extract(c.capture_json, '$.statusCode')='STATUS_CODE_ERROR')) as model_error_count,
         (select count(*) from turns t where t.session_id=s.id and t.end_signal='error') as turn_error_count
-        from sessions s order by started_at desc limit $limit`)
-      .all({ $limit: limit }) as Array<Record<string, unknown>>;
+        from sessions s where ($startedAt is null or s.started_at < $startedAt or (s.started_at = $startedAt and s.id < $id))
+        order by s.started_at desc, s.id desc limit $limit`)
+      .all({ $limit: limit, $startedAt: after?.startedAt ?? null, $id: after?.id ?? null }) as Array<Record<string, unknown>>;
     return rows.map(rowToSession);
+  }
+
+  countSessions(): number {
+    return (this.db.query("select count(*) as count from sessions").get() as { count: number }).count;
   }
 
   getSession(id: string): SessionRecord | undefined {

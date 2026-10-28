@@ -45,7 +45,10 @@ export class V2Adapter {
       this.turns.set(event.sessionID, turn);
       this.builder.onChatMessage({ sessionID: event.sessionID, agent: event.agent }, { message: turn, parts: [] });
     }
-    const messages = [
+    // Historical tool messages may not retain reliable tool identity. Fail closed:
+    // suppress the complete input capture when output-redaction policy is active.
+    const hideConversation = !this.config.captureContent || this.config.hideInputs || this.config.hideInputMessages || this.config.hideOutputs || this.config.hideOutputMessages || this.config.redactToolOutputs.length > 0;
+    const messages = hideConversation ? [] : [
       ...event.system.map((part) => ({ role: "system", content: truncate(contentText([part]), this.config.maxAttrChars) })),
       ...event.messages.map((message) => ({ role: message.role, content: truncate(contentText(message.content), this.config.maxAttrChars) })),
     ];
@@ -54,7 +57,7 @@ export class V2Adapter {
       sessionID: event.sessionID, agent: event.agent, message: turn,
       model: { modelID: event.model.id }, provider: { info: { id: event.model.providerID } },
     }, { ...event.options, maxOutputTokens: event.options.maxTokens });
-    if (this.config.captureContent && !this.config.hideInputs && !this.config.hideInputMessages) {
+    if (!hideConversation) {
       const segments = messages.map((message, ord) => ({
         ord, source_kind: message.role, source_name: `${message.role}[${ord}]`,
         char_len: message.content.length, sha256: hash(message.content),

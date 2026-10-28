@@ -3,13 +3,13 @@ import { NodeTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@
 import type { SessionContext } from "@opencode/plugin/promise/session";
 import { V2Adapter, type PublicEvent } from "./v2.js";
 import { TraceBuilder } from "./trace-builder.js";
-import { CONFIG_DEFAULTS } from "./config.js";
+import { CONFIG_DEFAULTS, type ResolvedConfig } from "./config.js";
 
 const tokens = { input: 100, output: 20, reasoning: 5, cache: { read: 80, write: 0 } };
-function harness(hideInputs = false) {
+function harness(hideInputs = false, overrides: Partial<ResolvedConfig> = {}) {
   const exporter = new InMemorySpanExporter();
   const provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
-  const config = { ...CONFIG_DEFAULTS, hideInputs };
+  const config = { ...CONFIG_DEFAULTS, hideInputs, ...overrides };
   const builder = new TraceBuilder({ tracer: provider.getTracer("v2-test"), config });
   const adapter = new V2Adapter(builder, config);
   const event = (type: string, data: object) => adapter.onEvent({ type, data, created: Date.now() } as PublicEvent);
@@ -31,6 +31,21 @@ function harness(hideInputs = false) {
 }
 
 describe("OpenCode V2 tracing", () => {
+  test("output redaction cannot leak through subsequent LLM input capture or prompt enrichment", async () => {
+    for (const config of [{ hideOutputs: true }, { hideOutputMessages: true }, { redactToolOutputs: ["shell"] }]) {
+      const h = harness(false, config);
+      h.request("a", "ordinary user request");
+      h.adapter.onContext({ sessionID: "a", agent: "build", model: { providerID: "openai", id: "test-model" },
+        system: [{ type: "text", text: "instructions" }], messages: [{ role: "tool", content: [{ type: "text", text: "synthetic-secret-sentinel" }] }], tools: {}, options: {},
+      } as unknown as SessionContext);
+      h.start("a", "step-a"); h.end("a", "step-a"); h.builder.closeAll();
+      const llm = h.exporter.getFinishedSpans().find(s => s.attributes["openinference.span.kind"] === "LLM")!;
+      expect(llm.attributes["llm.input_messages"]).toBeUndefined();
+      expect(llm.attributes["prompt.segments"]).toBeUndefined();
+      expect(JSON.stringify(llm.attributes)).not.toContain("synthetic-secret-sentinel");
+      await h.provider.shutdown();
+    }
+  });
   test("long histories do not exhaust the span attribute budget before usage and output arrive", async () => {
     const h = harness();
     h.request("a", "long-history", "user-a", 100);

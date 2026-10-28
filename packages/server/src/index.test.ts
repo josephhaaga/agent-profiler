@@ -33,6 +33,32 @@ function savedSession(id: string, cacheRead = 0, known = true) {
   ] };
 }
 
+test("session pagination discovers all equal-timestamp records without duplication", async () => {
+  for (let i = 0; i < 7; i++) await request("/api/import/opencode", savedSession(`ses_cursor_fixture_${i}`));
+  const ids: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const page: { sessions: Array<{ id: string }>; total: number; nextCursor: string | null } = await request(`/api/sessions?limit=2${cursor ? `&cursor=${cursor}` : ""}`);
+    expect(page.total).toBeGreaterThanOrEqual(7);
+    ids.push(...page.sessions.map(s => s.id)); cursor = page.nextCursor;
+  } while (cursor);
+  expect(ids.length).toBe(new Set(ids).size);
+  expect(ids.filter(id => id.startsWith("ses_cursor_fixture_"))).toHaveLength(7);
+  for (const query of ["limit=-1", "limit=NaN", "limit=1001", "cursor=bad"]) expect((await fetch(`${base}/api/sessions?${query}`)).status).toBe(400);
+});
+
+test("absent imported tool output is Unknown rather than zero tokens", async () => {
+  const fixture = savedSession("ses_missing_tool_output");
+  await request("/api/import/opencode", { ...fixture, messages: [...fixture.messages, {
+    type: "assistant", id: "msg_tool", model: { id: "fixture", providerID: "fixture" }, time: { created: 6000, completed: 7000 }, finish: "stop", content: [
+      { type: "tool", id: "tool_missing", name: "read", time: { created: 6100, completed: 6200 }, state: { status: "completed", input: {} } },
+    ],
+  }] });
+  const { turns } = await request("/api/sessions/ses_missing_tool_output/turns");
+  const { toolCalls } = await request(`/api/turns/${turns[0].id}/tool-calls`);
+  expect(toolCalls[0].tokensOutEst).toBeNull();
+});
+
 function attributes(values: Record<string, string | number | string[]>) {
   return Object.entries(values).map(([key, value]) => ({ key, value: typeof value === "string" ? { stringValue: value }
     : typeof value === "number" ? { doubleValue: value } : { arrayValue: { values: value.map(stringValue => ({ stringValue })) } } }));

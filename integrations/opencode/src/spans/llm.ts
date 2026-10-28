@@ -65,6 +65,7 @@ export function setLlmInputMessages(
 ): void {
   if (!config.captureContent || config.hideInputMessages) return;
   if (config.hideInputs) return;
+  if (config.hideOutputs || config.hideOutputMessages || config.redactToolOutputs.length) return;
   // The profiler collector consumes the aggregate JSON as well as OI's indexed keys.
   span.setAttribute("llm.input_messages", safeJson(messages.map((message) => ({ message }))));
   // OTel defaults to 128 attributes per span. The aggregate above preserves

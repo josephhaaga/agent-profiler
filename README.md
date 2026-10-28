@@ -5,9 +5,8 @@ from OpenCode (and other harnesses), stores them in SQLite, and serves a
 keyboard-driven web UI with evidence-led findings, recorded-error triage,
 cache accounting, prompt inspection, and descriptive cross-harness comparison.
 
-**Local development preview:** the improvements below, including `demo`, are
-unpublished. The npm release does not yet include them. Run this checkout's
-build to try them without replacing an installed collector.
+See [CHANGELOG.md](CHANGELOG.md) for the CLI 0.3.0 / OpenCode plugin 0.4.2 release
+and upgrade instructions.
 
 ### Try synthetic data without instrumentation
 
@@ -39,6 +38,10 @@ persists in `~/.agent-profiler/`. A PID file does not restart a process after
 reboot; automatic startup requires an OS service (provided by the author's
 dotfiles deployment).
 
+Run `agent-profiler open` to open the local UI. No accounts, access tokens, login
+screen, or model-provider credentials are required to inspect history. Keep the
+collector local; it is not designed for public hosting.
+
 ## Quickstart
 
 ### 1. Start the server
@@ -56,7 +59,7 @@ Add one line to your `opencode.json` (project-level or `~/.config/opencode/openc
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-agent-profiler"]
+  "plugins": ["opencode-agent-profiler@0.4.2"]
 }
 ```
 
@@ -87,7 +90,8 @@ agent-profiler logs        Print the last 100 lines of server logs
 agent-profiler logs -f     Tail server logs (follow mode)
 agent-profiler open        Open the web UI in your browser
 agent-profiler import opencode   Import historical OpenCode V2 sessions
-agent-profiler demo [--no-open]  Explore disposable synthetic data (local preview)
+agent-profiler demo [--no-open]  Explore disposable synthetic data
+agent-profiler --version   Show the installed CLI version
 ```
 
 ### Import existing OpenCode sessions
@@ -138,18 +142,18 @@ and rerunning the command resumes safely through deduplication.
 
 ## Plugin options
 
-Point the plugin at a non-default host (e.g. a shared team server):
+Point the plugin at a non-default local port:
 
 ```json
 {
-  "plugins": [{ "package": "opencode-agent-profiler", "options": { "endpoint": "http://my-server:7070/v1/traces" } }]
+  "plugins": [{ "package": "opencode-agent-profiler@0.4.2", "options": { "endpoint": "http://127.0.0.1:7071/v1/traces" } }]
 }
 ```
 
 Or via environment variable:
 
 ```bash
-AGENT_PROFILER_ENDPOINT=http://my-server:7070/v1/traces opencode
+AGENT_PROFILER_ENDPOINT=http://127.0.0.1:7071/v1/traces opencode
 ```
 
 | Option | Env var | Default | Description |
@@ -161,17 +165,25 @@ AGENT_PROFILER_ENDPOINT=http://my-server:7070/v1/traces opencode
 | `hideInputs` | `OPENINFERENCE_HIDE_INPUTS` | `false` | Redact all input content |
 | `hideOutputs` | `OPENINFERENCE_HIDE_OUTPUTS` | `false` | Redact all output content |
 
+Output hiding (including `hideOutputMessages` or a nonempty `redactToolOutputs`
+list) also disables captured conversation inputs and prompt enrichment. Otherwise
+a hidden tool result could reappear in a later prompt. Existing captured history
+is not retroactively redacted. Hook diagnostics record hook names, not raw content.
+
 ## Server environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AGENT_PROFILER_PORT` | `7070` | Server port |
-| `AGENT_PROFILER_HOST` | `127.0.0.1` | Bind address; opt in explicitly to non-loopback access |
+| `AGENT_PROFILER_HOST` | `127.0.0.1` | Bind address; keep loopback for private local use |
 | `AGENT_PROFILER_DB_PATH` | `~/.agent-profiler/agent-profiler.sqlite` | SQLite database path |
+
+Imports intentionally retain unredacted history. Do not expose the collector
+through public DNS, tunnels, or a public proxy. Protect your OS account and backups.
 
 ## What it does
 
-The unpublished UI redesign uses a graphite, keyboard-first workbench for reviewing
+The UI uses a graphite, keyboard-first workbench for reviewing
 agent behavior before refining instructions, skills and tool definitions. Session
 review leads to findings, turns and original evidence; it does not infer which
 configuration caused an outcome. Press `?` for shortcuts, `⌘/Ctrl K` for search,
@@ -202,7 +214,7 @@ return HTTP 400 without partial writes or events. Successful ingestion returns
 204; if data committed but automatic analysis failed, HTTP 202 explicitly reports
 `accepted: true, analysis: "failed"`. Refresh findings to retry analysis.
 
-The session list loads the latest 200 sessions; comparisons inspect the latest
+The session list loads all cursor-paginated sessions; comparisons inspect the latest
 1000. Activity retains 100 session groups and 200 raw receipts in browser memory,
 not a durable replay log. See [local improvement cycles](docs/IMPROVEMENT-CYCLES.md)
 for verification and remaining limits.

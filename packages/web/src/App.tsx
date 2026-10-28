@@ -276,7 +276,7 @@ function SessionsView({ onSelect, sessions, loading, error, onRetry }: {
           </Table>
         </div>
       )}
-      <div className="session-list-footer flex flex-wrap items-center justify-between gap-2 pt-2 text-xs text-muted-foreground"><span>{sorted.length} of {sessions.length} loaded sessions · Latest 200</span><span className="hidden sm:flex items-center gap-1.5"><kbd>J</kbd><kbd>K</kbd> select <span className="mx-1">·</span><kbd>Enter</kbd> open</span></div>
+      <div className="session-list-footer flex flex-wrap items-center justify-between gap-2 pt-2 text-xs text-muted-foreground"><span>{sorted.length} of {sessions.length} loaded sessions · All pages loaded</span><span className="hidden sm:flex items-center gap-1.5"><kbd>J</kbd><kbd>K</kbd> select <span className="mx-1">·</span><kbd>Enter</kbd> open</span></div>
     </div>
   );
 }
@@ -1037,8 +1037,8 @@ const SEG_COLORS: Record<string, string> = {
 };
 function segColor(k: string) { return SEG_COLORS[k] ?? "var(--color-muted-foreground)"; }
 
-function PromptInspectorView({ llmCallId, sessionId }: { llmCallId: string; sessionId: string }) {
-  const { data, error, refresh } = useResource(`prompt:${llmCallId}`, sessionId, async signal => {
+function PromptInspectorView({ llmCallId, sessionId, refreshKey }: { llmCallId: string; sessionId: string; refreshKey: string }) {
+  const { data, error, refresh } = useResource(`prompt:${llmCallId}`, refreshKey, async signal => {
     const [{ segments }, { turns }] = await Promise.all([api.segments(llmCallId, signal), api.turns(sessionId, signal)]);
     const batches = await Promise.all(turns.map(t => api.llmCalls(t.id, signal)));
     const llmCall = batches.flatMap(b => b.llmCalls).find(c => c.id === llmCallId);
@@ -1173,8 +1173,8 @@ function PromptInspectorView({ llmCallId, sessionId }: { llmCallId: string; sess
 
 // ── Compare — deltas ranked by magnitude, not flat grid ───────────────────────
 
-function CompareView() {
-  const { data, loading, error, refresh } = useResource("compare", "initial", async () => api.compare());
+function CompareView({ refreshKey }: { refreshKey: string }) {
+  const { data, loading, error, refresh } = useResource("compare", refreshKey, async () => api.compare());
   const result = data?.compare;
 
   if (loading) {
@@ -1807,9 +1807,9 @@ export function App() {
           )}
           {view.page === "cache" && <CachePanelView sessionId={view.sessionId} refreshKey={sessionRevision(view.sessionId)} onTurnSelect={id => navigate({ page: "turn", id, sessionId: view.sessionId })} />}
           {view.page === "prompt" && (
-            <PromptInspectorView llmCallId={view.llmCallId} sessionId={view.sessionId} />
+            <PromptInspectorView llmCallId={view.llmCallId} sessionId={view.sessionId} refreshKey={sessionRevision(view.sessionId)} />
           )}
-          {view.page === "compare" && <CompareView />}
+          {view.page === "compare" && <CompareView refreshKey={`${live.connections}:${live.receivedCount}`} />}
         </main>
 
         {/* Live tail — separate panel, not persistent sidebar */}

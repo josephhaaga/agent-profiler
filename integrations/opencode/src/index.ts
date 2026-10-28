@@ -6,7 +6,7 @@ import { TraceBuilder } from "./trace-builder.js";
 import { V2Adapter } from "./v2.js";
 import { safeJson } from "./attributes.js";
 import { sanitizeMcpKey } from "./mcp.js";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, chmodSync } from "node:fs";
 
 export default Plugin.define({
   id: "opencode-agent-profiler",
@@ -25,9 +25,13 @@ export default Plugin.define({
     };
     const controller = new AbortController();
     let disposed = false;
-    const logHook = (hook: string, input: unknown) => {
+    const logHook = (hook: string, _input: unknown) => {
       if (!config.hookLog) return;
-      try { appendFileSync(config.hookLog, safeJson({ ts: Date.now(), hook, input }) + "\n", { mode: 0o600 }); } catch { /* optional diagnostics */ }
+      try {
+        // Diagnostics must not bypass content-redaction settings.
+        appendFileSync(config.hookLog, safeJson({ ts: Date.now(), hook }) + "\n", { mode: 0o600 });
+        chmodSync(config.hookLog, 0o600);
+      } catch { /* optional diagnostics */ }
     };
     try {
       builder.setMcpServers(new Set((await ctx.mcp.list()).data.map((server) => sanitizeMcpKey(server.name))));

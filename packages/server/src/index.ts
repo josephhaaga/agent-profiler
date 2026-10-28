@@ -123,7 +123,7 @@ const server = Bun.serve({
     // ── Health ──────────────────────────────────────────────────────────────
 
     if (pathname === "/healthz") {
-      return json({ ok: true, name: "agent-profiler", version: "0.1.0", demo: process.env.AGENT_PROFILER_DEMO === "true" });
+      return json({ ok: true, name: "agent-profiler", version: process.env.AGENT_PROFILER_VERSION ?? process.env.AGENT_PROFILER_BUILD_VERSION ?? "dev", demo: process.env.AGENT_PROFILER_DEMO === "true" });
     }
 
     // ── OTLP ingest ─────────────────────────────────────────────────────────
@@ -198,7 +198,21 @@ const server = Bun.serve({
 
     if (pathname === "/api/sessions" && req.method === "GET") {
       const limit = Number(url.searchParams.get("limit") ?? 100);
-      return json({ sessions: store.listSessions(limit).map(s => store.present(s)) });
+      if (!Number.isInteger(limit) || limit < 1 || limit > 1000) return json({ error: "limit must be an integer from 1 to 1000" }, 400);
+      let after: { startedAt: string; id: string } | undefined;
+      const cursor = url.searchParams.get("cursor");
+      if (cursor) {
+        try {
+          if (cursor.length > 2048) throw new Error();
+          after = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+          if (!after || typeof after.startedAt !== "string" || typeof after.id !== "string") throw new Error();
+        } catch { return json({ error: "Invalid session cursor" }, 400); }
+      }
+      const page = store.listSessions(limit + 1, after);
+      const sessions = page.slice(0, limit);
+      const last = sessions.at(-1);
+      const nextCursor = page.length > limit && last ? Buffer.from(JSON.stringify({ startedAt: last.startedAt, id: last.id })).toString("base64url") : null;
+      return json({ sessions: sessions.map(s => store.present(s)), total: store.countSessions(), nextCursor });
     }
 
     const sessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)$/);

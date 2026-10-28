@@ -12,7 +12,7 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import type { Tracer } from "@opentelemetry/api";
 import type { SpanExporter, ReadableSpan } from "@opentelemetry/sdk-trace-node";
 import { SEMRESATTRS_PROJECT_NAME } from "@arizeai/openinference-semantic-conventions";
-import { appendFileSync } from "fs";
+import { appendFileSync, chmodSync } from "fs";
 import type { ResolvedConfig } from "./config.js";
 
 const TRACER_NAME = "opencode-openinference";
@@ -51,7 +51,8 @@ class LoggingSpanExporter implements SpanExporter {
           status: s.status,
         })),
       };
-      appendFileSync(this.logPath, JSON.stringify(record) + "\n", "utf8");
+      appendFileSync(this.logPath, JSON.stringify(record) + "\n", { encoding: "utf8", mode: 0o600 });
+      chmodSync(this.logPath, 0o600);
     } catch {
       // never let logging break the exporter
     }

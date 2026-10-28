@@ -87,7 +87,7 @@ export function closeToolSpan(span: Span, args: CloseToolArgs): void {
     );
   }
 
-  if (metadata !== undefined && metadata !== null) {
+  if (config.captureContent && !config.hideOutputs && !redacted && metadata !== undefined && metadata !== null) {
     setStr(span, SemanticConventions.METADATA, safeJson(metadata), config.maxAttrChars);
   }
 

@@ -32,8 +32,9 @@ and descriptive comparisons. OpenCode live capture and historical import coexist
 - Trace evidence does not establish causation by a particular instruction, skill,
   or MCP definition. Automatic configuration attribution and editing are not
   implemented and must not be represented as available.
-- All work in this iteration stays local and unpublished. Do not change the
-  installed collector, dotfiles, or production data.
+- The initial design iteration was local and unpublished. The user subsequently
+  authorized security hardening, package releases, and local installation/history
+  setup. Personal traces and configuration must never enter the public repository.
 
 ## Brand Commitments
 

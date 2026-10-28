@@ -8,7 +8,22 @@ async function apiFetch<T>(path: string, signal?: AbortSignal): Promise<T> {
 
 export const api = {
   health: (signal?: AbortSignal) => apiFetch<{ ok: boolean; demo?: boolean }>("/healthz", signal),
-  sessions: (signal?: AbortSignal) => apiFetch<{ sessions: import("./types").SessionRecord[] }>("/api/sessions?limit=200", signal),
+  sessions: async (signal?: AbortSignal) => {
+    type Session = import("./types").SessionRecord;
+    const sessions = new Map<string, Session>();
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    let total = 0;
+    do {
+      const page: { sessions: Session[]; total: number; nextCursor: string | null } = await apiFetch(`/api/sessions?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, signal);
+      for (const session of page.sessions) sessions.set(session.id, session);
+      total = page.total;
+      cursor = page.nextCursor;
+      if (cursor && seen.has(cursor)) throw new Error("Collector repeated a session cursor");
+      if (cursor) seen.add(cursor);
+    } while (cursor);
+    return { sessions: [...sessions.values()], total };
+  },
   session: (id: string, signal?: AbortSignal) => apiFetch<{ session: import("./types").SessionRecord }>(`/api/sessions/${id}`, signal),
   turns: (sessionId: string, signal?: AbortSignal) => apiFetch<{ turns: import("./types").TurnRecord[] }>(`/api/sessions/${sessionId}/turns`, signal),
   turn: (id: string, signal?: AbortSignal) => apiFetch<{ turn: import("./types").TurnRecord }>(`/api/turns/${id}`, signal),

@@ -16,6 +16,7 @@ import { homedir } from "os";
 import { fileURLToPath } from "url";
 import { importOpenCode } from "./import.js";
 import { parseDemoArgs, startDemo } from "./demo.js";
+const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version as string;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -124,6 +125,7 @@ async function cmdStart(): Promise<void> {
     env: {
       ...process.env,
       AGENT_PROFILER_WEB_DIST: WEB_DIST,
+      AGENT_PROFILER_VERSION: VERSION,
     },
   });
 
@@ -200,9 +202,11 @@ function cmdLogs(follow: boolean): void {
 function cmdOpen(): void {
   const url = `http://localhost:${port}`;
   const opener = process.platform === "darwin" ? "open"
-               : process.platform === "win32"  ? "start"
+               : process.platform === "win32" ? "cmd"
                : "xdg-open";
-  spawn(opener, [url], { detached: true, stdio: "ignore" }).unref();
+  const child = spawn(opener, process.platform === "win32" ? ["/c", "start", "", url] : [url], { detached: true, stdio: "ignore" });
+  child.on("error", () => { console.error(`Could not launch browser. Open ${url}`); });
+  child.unref();
   console.log(`Opening ${url}`);
 }
 
@@ -234,6 +238,7 @@ Environment:
 const [,, cmd, ...rest] = process.argv;
 
 switch (cmd) {
+  case "--version": case "-v": console.log(VERSION); break;
   case "demo":
     try {
       const options = parseDemoArgs(rest);
@@ -259,7 +264,7 @@ switch (cmd) {
   case "stop":   await cmdStop();  break;
   case "status": await cmdStatus(); break;
   case "logs":   cmdLogs(rest.includes("-f") || rest.includes("--follow")); break;
-  case "open":   cmdOpen(); break;
+  case "open": cmdOpen(); break;
   case undefined:
   case "--help": case "-h": case "help":
     printHelp(); break;

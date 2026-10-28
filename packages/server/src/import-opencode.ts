@@ -134,7 +134,7 @@ export function importOpenCodeExport(data: Export, store: Store): { sessionId: s
           argsRef: state.input ? blob(state.input) : undefined, outputRef: output ? blob(output, "application/json") : undefined,
           latencyMs: tool.time.completed != null ? Math.max(0, tool.time.completed - (tool.time.ran ?? tool.time.created)) : 0,
           tokensOutEst: output ? Math.ceil(output.length / 4) : 0, status: state.status === "error" ? "ERROR" : state.status === "completed" ? "OK" : state.status });
-        store.setCapture(toolId, { ...imported, sourceToolId: tool.id, unknownMetrics: tool.time.completed == null ? ["latencyMs"] : [] });
+        store.setCapture(toolId, { ...imported, sourceToolId: tool.id, unknownMetrics: [...(tool.time.completed == null ? ["latencyMs"] : []), ...(output === undefined ? ["tokensOutEst"] : [])] });
       }
       const turn = store.getTurn(current.id)!;
       store.upsertTurn({ ...turn, assistantText: [turn.assistantText, text].filter(Boolean).join("\n"), endedAt: message.time.completed ? iso(message.time.completed) : turn.endedAt,

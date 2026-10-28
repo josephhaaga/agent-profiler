@@ -48,6 +48,7 @@ const serverResult = await Bun.build({
   target: "bun",
   format: "esm",
   minify: false,
+  define: { "process.env.AGENT_PROFILER_BUILD_VERSION": JSON.stringify((await Bun.file(join(import.meta.dir, "package.json")).json()).version) },
 });
 if (!serverResult.success) {
   for (const msg of serverResult.logs) console.error(msg);
