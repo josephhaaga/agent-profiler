@@ -37,15 +37,8 @@
     "test:e2e": "bun run test/harness/run-e2e.ts",
     "test:e2e:record": "bun run test/harness/run-e2e.ts --record"
   },
-  "peerDependencies": {
-    "@opencode-ai/plugin": ">=1.17.0"
-  },
-  "peerDependenciesMeta": {
-    "@opencode-ai/plugin": {
-      "optional": true
-    }
-  },
   "dependencies": {
+    "@opencode/plugin": "2.2.0",
     "@arizeai/openinference-core": "^2.2.0",
     "@arizeai/openinference-semantic-conventions": "^2.5.0",
     "@opentelemetry/api": "^1.9.0",
@@ -54,7 +47,6 @@
     "@opentelemetry/sdk-trace-node": "^2.8.0"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.17.4",
     "@types/node": "^22"
   }
 }

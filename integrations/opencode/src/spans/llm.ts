@@ -64,6 +64,9 @@ export function setLlmInputMessages(
   config: ResolvedConfig,
 ): void {
   if (!config.captureContent || config.hideInputMessages) return;
+  if (config.hideInputs) return;
+  // The profiler collector consumes the aggregate JSON as well as OI's indexed keys.
+  span.setAttribute("llm.input_messages", safeJson(messages.map((message) => ({ message }))));
   messages.forEach((m, i) => {
     const base = `${SemanticConventions.LLM_INPUT_MESSAGES}.${i}.${SemanticConventions.MESSAGE_ROLE}`;
     span.setAttribute(base, m.role);
@@ -103,7 +106,8 @@ export function closeLlmSpan(span: Span, args: CloseLlmArgs): void {
   const t = assistant.tokens;
 
   // Output message (assistant text + any tool calls the model emitted).
-  if (config.captureContent && !config.hideOutputMessages && outputMessage) {
+  if (config.captureContent && !config.hideOutputs && !config.hideOutputMessages && outputMessage) {
+    span.setAttribute("llm.output_messages", safeJson([{ message: outputMessage }]));
     const base = `${SemanticConventions.LLM_OUTPUT_MESSAGES}.0.${SemanticConventions.MESSAGE_ROLE}`;
     span.setAttribute(base, outputMessage.role);
     if (outputMessage.content !== undefined) {
@@ -156,6 +160,7 @@ export function closeLlmSpan(span: Span, args: CloseLlmArgs): void {
   setNum(span, SemanticConventions.LLM_COST_TOTAL, assistant.cost);
 
   // Metadata.
+  setStr(span, "llm.finish_reason", assistant.finish, config.maxAttrChars);
   setStr(
     span,
     SemanticConventions.METADATA,
@@ -165,5 +170,7 @@ export function closeLlmSpan(span: Span, args: CloseLlmArgs): void {
 
   const errored = Boolean(assistant.error);
   span.setStatus({ code: errored ? SpanStatusCode.ERROR : SpanStatusCode.OK });
-  span.end();
+  // V2's provider-response boundary precedes tool settlement. Do not charge
+  // tool execution time to model latency while waiting for final token data.
+  span.end(assistant.time.completed);
 }

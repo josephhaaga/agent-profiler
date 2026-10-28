@@ -9,7 +9,7 @@
 import { NodeTracerProvider, BatchSpanProcessor } from "@opentelemetry/sdk-trace-node";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { trace, type Tracer } from "@opentelemetry/api";
+import type { Tracer } from "@opentelemetry/api";
 import type { SpanExporter, ReadableSpan } from "@opentelemetry/sdk-trace-node";
 import { SEMRESATTRS_PROJECT_NAME } from "@arizeai/openinference-semantic-conventions";
 import { appendFileSync } from "fs";
@@ -91,11 +91,9 @@ export function initOtel(config: ResolvedConfig): OtelHandle | null {
       spanProcessors: [new BatchSpanProcessor(exporter)],
     });
 
-    // Register so trace.getTracer(...) resolves to this provider. We avoid
-    // setting global context managers we do not need.
-    provider.register();
-
-    const tracer = trace.getTracer(TRACER_NAME, TRACER_VERSION);
+    // V2 loads one plugin runtime per location. Never register globally: another
+    // location (or the host) may own the global provider and its lifecycle.
+    const tracer = provider.getTracer(TRACER_NAME, TRACER_VERSION);
 
     return {
       tracer,

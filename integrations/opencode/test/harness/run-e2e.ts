@@ -29,7 +29,7 @@
  *   Exits non-zero on failure.
  */
 
-import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, copyFileSync, mkdtempSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, copyFileSync, mkdtempSync, cpSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
@@ -42,11 +42,9 @@ const INTEGRATION_DIR = resolve(HARNESS_DIR, "../..");
 const REPO_ROOT = resolve(INTEGRATION_DIR, "../..");
 // Allow container env overrides for paths that differ inside Docker.
 const SERVER_SRC = process.env["AGENT_PROFILER_SERVER_SRC"] ?? join(REPO_ROOT, "packages/server/src/index.ts");
-const PLUGIN_DIST = process.env["AGENT_PROFILER_PLUGIN_DIST"] ?? join(INTEGRATION_DIR, "dist/index.js");
+const PLUGIN_DIST = process.env["AGENT_PROFILER_PLUGIN_DIST"] ?? INTEGRATION_DIR;
 const FIXTURES_DIR = join(HARNESS_DIR, "../fixtures");
 const SCENARIOS_DIR = join(HARNESS_DIR, "scenarios");
-// Working directory opencode operates in (defaults to current dir; overridden by container).
-const OPENCODE_WORKDIR = process.env["AGENT_PROFILER_WORKSPACE"] ?? process.cwd();
 
 // ---------------------------------------------------------------------------
 // Args
@@ -134,7 +132,7 @@ function spawnProc(cmd: string, args: string[], env: Record<string, string>, lab
 // ---------------------------------------------------------------------------
 async function main(): Promise<void> {
   // 1. Ensure plugin dist is built
-  if (!existsSync(PLUGIN_DIST)) {
+  if (!existsSync(join(PLUGIN_DIST, "dist/index.js"))) {
     log("Plugin dist not found, building...");
     const build = spawn("bun", ["run", "--cwd", INTEGRATION_DIR, "build"], {
       env: process.env,
@@ -146,7 +144,7 @@ async function main(): Promise<void> {
   }
 
   // 2. Create sandbox HOME
-  const sandboxHome = mkdtempSync(join(tmpdir(), "ap-e2e-"));
+  const sandboxHome = mkdtempSync(join(process.env["AGENT_PROFILER_TEST_TMPDIR"] ?? tmpdir(), "ap-e2e-"));
   log(`sandbox HOME: ${sandboxHome}`);
 
   const cleanup = () => {
@@ -251,31 +249,30 @@ async function main(): Promise<void> {
     mkdirSync(configDir, { recursive: true });
 
     // Write the opencode.json
-    const pluginEntry = PLUGIN_DIST; // absolute path to local built plugin
+    const pluginEntry = PLUGIN_DIST; // V2 local plugin entries name package directories
     const opencodeConfig: Record<string, unknown> = {
       "$schema": "https://opencode.ai/config.json",
-      plugin: [
-        [pluginEntry, {
+      plugins: [
+        { package: pluginEntry, options: {
           endpoint: `http://localhost:${serverPort}/v1/traces`,
           hookLog: hookLogPath,
           traceLog: traceLogPath,
-        }],
+        } },
       ],
     };
 
     // Provider config for stub/local modes
     if (mode === "stub" || mode === "local") {
-      opencodeConfig["provider"] = {
+      opencodeConfig["providers"] = {
         stub: {
-          npm: "@ai-sdk/openai-compatible",
+          package: "@opencode/ai/providers/openai-compatible",
           name: "Stub LLM",
-          api: llmBaseUrl,
-          options: { apiKey: "stub-key" },
+          settings: { baseURL: llmBaseUrl, apiKey: "stub-key" },
           models: {
             "stub-model": {
-              id: "stub-model",
+              modelID: "stub-model",
               name: "Stub Model",
-              tool_call: true,
+              capabilities: { tools: true },
               limit: { context: 128000, output: 4096 },
             },
           },
@@ -290,6 +287,10 @@ async function main(): Promise<void> {
     log(`running opencode: "${prompt}" with model ${llmModel}`);
     const ocEnv: Record<string, string> = {
       HOME: sandboxHome,
+      XDG_CONFIG_HOME: join(sandboxHome, ".config"),
+      XDG_DATA_HOME: join(sandboxHome, ".local/share"),
+      XDG_STATE_HOME: join(sandboxHome, ".local/state"),
+      XDG_CACHE_HOME: join(sandboxHome, ".cache"),
       OPENCODE_CONFIG_DIR: configDir,
       // Silence ambient noise
       OPENCODE_DISABLE_AUTOUPDATE: "1",
@@ -306,8 +307,10 @@ async function main(): Promise<void> {
 
     const ocArgs = [
       "run",
+      "--standalone",
       "--format", "json",
-      "--dangerously-skip-permissions",
+      "--auto",
+      "--title", "Agent profiler V2 integration test",
       "--model", llmModel,
       prompt,
     ];
@@ -317,10 +320,13 @@ async function main(): Promise<void> {
     const ocOutput: string[] = [];
     const ocStderr: string[] = [];
 
+    const workspace = process.env["AGENT_PROFILER_WORKSPACE"] ?? join(sandboxHome, "workspace");
+    if (!process.env["AGENT_PROFILER_WORKSPACE"]) cpSync(join(INTEGRATION_DIR, "test/container/fake-repo"), workspace, { recursive: true });
+    const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENCODE_") && !key.startsWith("AGENT_PROFILER_")));
     const ocProc = spawn("opencode", ocArgs, {
-      env: { ...process.env, ...ocEnv },
+      env: { ...cleanEnv, ...ocEnv },
       stdio: ["ignore", "pipe", "pipe"],
-      cwd: OPENCODE_WORKDIR,
+      cwd: workspace,
     });
 
     ocProc.stdout.on("data", (d: Buffer) => {
@@ -374,6 +380,29 @@ async function main(): Promise<void> {
       } catch {}
     }
 
+    // A successful CLI exit is not proof of telemetry. Assert collector-side
+    // records so missing LLM/tool spans cannot make the E2E test pass silently.
+    if (mode === "stub") {
+      const first = (fullSessions[0] as { session?: { llmCallCount: number; toolCallCount: number; turnCount: number; completionTokens: number } } | undefined)?.session;
+      const expectedLlm = scenario === "tool-call-then-text" ? 2 : 1;
+      const expectedTools = scenario === "tool-call-then-text" ? 1 : 0;
+      if (sessions.length !== 1 || first?.llmCallCount !== expectedLlm ||
+          first.toolCallCount !== expectedTools || first.turnCount !== 1 || first.completionTokens <= 0) {
+        throw new Error(`Incomplete profiler capture: ${JSON.stringify(first)}`);
+      }
+      const sessionId = (sessions[0] as { id: string }).id;
+      const turns = await (await fetch(`http://localhost:${serverPort}/api/sessions/${sessionId}/turns`)).json() as { turns: Array<{ id: string }> };
+      const turn = turns.turns[0]!;
+      const calls = await (await fetch(`http://localhost:${serverPort}/api/turns/${turn.id}/llm-calls`)).json() as { llmCalls: Array<{ inputMessagesRef?: string; outputRef?: string }> };
+      if (!calls.llmCalls.every((call) => call.inputMessagesRef) || !calls.llmCalls.some((call) => call.outputRef)) {
+        throw new Error("LLM prompt/response bodies were not stored");
+      }
+      if (expectedTools) {
+        const tools = await (await fetch(`http://localhost:${serverPort}/api/turns/${turn.id}/tool-calls`)).json() as { toolCalls: Array<{ argsRef?: string; outputRef?: string }> };
+        if (!tools.toolCalls[0]?.argsRef || !tools.toolCalls[0]?.outputRef) throw new Error("Tool input/output bodies were not stored");
+      }
+    }
+
     // 10. Save logs
     const expectedSessionsPath = join(sandboxHome, "expected-sessions.json");
     writeFileSync(expectedSessionsPath, JSON.stringify(fullSessions, null, 2));
@@ -416,7 +445,7 @@ async function main(): Promise<void> {
 
     console.log(JSON.stringify(summary, null, 2));
 
-    if (ocExitCode !== 0) {
+    if (ocExitCode !== 0 || sessions.length === 0) {
       process.exitCode = 1;
     }
   } finally {

@@ -9,7 +9,7 @@
  * We therefore keep per-session state and use a FIFO of open LLM spans, closing
  * the oldest on each terminal `message.updated`.
  */
-import { type Span, type Tracer } from "@opentelemetry/api";
+import { type Span, type Tracer, SpanStatusCode } from "@opentelemetry/api";
 import { SemanticConventions } from "@arizeai/openinference-semantic-conventions";
 import type { ResolvedConfig } from "./config.js";
 import type {
@@ -76,6 +76,7 @@ interface SessionState {
   /** Buffered pre-request context for the next LLM span. */
   pendingSystem?: string[];
   pendingMessages?: { info: Message; parts: Part[] }[];
+  pendingInput?: OIMessage[];
   /** Accumulated assistant text keyed by assistant messageID. */
   assistantText: Map<string, string>;
   /**
@@ -92,17 +93,20 @@ export class TraceBuilder {
   private readonly sessions = new Map<string, SessionState>();
   private mcpServers: ReadonlySet<string> | undefined;
   private userId: string | undefined;
+  private readonly project: string | undefined;
 
   constructor(opts: {
     tracer: Tracer;
     config: ResolvedConfig;
     mcpServers?: ReadonlySet<string>;
     userId?: string;
+    project?: string;
   }) {
     this.tracer = opts.tracer;
     this.config = opts.config;
     this.mcpServers = opts.mcpServers;
     this.userId = opts.userId;
+    this.project = opts.project;
   }
 
   setMcpServers(servers: ReadonlySet<string>): void {
@@ -126,6 +130,7 @@ export class TraceBuilder {
         userId: this.userId,
         config: this.config,
       });
+      if (this.project) span.setAttribute("project", this.project);
       s = {
         span,
         createdAt: Date.now(),
@@ -146,13 +151,13 @@ export class TraceBuilder {
     return s;
   }
 
-  endSession(sessionID: string, errored = false): void {
+  endSession(sessionID: string, errored = false, force = false): void {
     const s = this.sessions.get(sessionID);
     if (!s) return;
     // If there are LLM spans still awaiting their message.updated token data,
     // mark the session as draining rather than force-closing it. The session
     // will be cleaned up by onMessageUpdated once the map empties.
-    if (s.llmMap.size > 0) {
+    if (!force && s.llmMap.size > 0) {
       s.draining = true;
       s.drainingErrored = errored;
       return;
@@ -167,7 +172,11 @@ export class TraceBuilder {
     }
     s.tools.clear();
     for (const queue of s.llmMap.values()) {
-      for (const l of queue) l.span.end();
+      for (const l of queue) {
+        l.span.setAttribute("opencode.incomplete", true);
+        if (errored) l.span.setStatus({ code: SpanStatusCode.ERROR });
+        l.span.end();
+      }
     }
     s.llmMap.clear();
     for (const turn of s.turns.values()) {
@@ -253,6 +262,11 @@ export class TraceBuilder {
     if (s) s.pendingMessages = entries;
   }
 
+  /** V2 request hooks carry the session identity and the assembled model context. */
+  onRequestContext(sessionID: string, messages: OIMessage[]): void {
+    this.ensureSession(sessionID).pendingInput = messages;
+  }
+
   // ---- LLM lifecycle -----------------------------------------------------
 
   /** chat.params → request start: open the LLM span (accurate latency start). */
@@ -268,7 +282,7 @@ export class TraceBuilder {
     topK?: number;
     maxOutputTokens?: number;
     options?: Record<string, unknown>;
-  }): void {
+  }): Span {
     const session = this.ensureSession(input.sessionID, input.agent);
     const turnMessageID = input.message?.id;
     const parent = this.parentForTurn(session, turnMessageID);
@@ -298,6 +312,7 @@ export class TraceBuilder {
     // Consume the buffers.
     session.pendingSystem = undefined;
     session.pendingMessages = undefined;
+    session.pendingInput = undefined;
 
     // Push to the per-user-message queue. A single user turn can produce
     // multiple sequential LLM calls (tool-call loop), all with the same
@@ -314,9 +329,11 @@ export class TraceBuilder {
       queue.push(llmEntry);
       session.llmMap.set("", queue);
     }
+    return span;
   }
 
   private assembleInputMessages(session: SessionState): OIMessage[] {
+    if (session.pendingInput) return session.pendingInput;
     const opts = {
       maxAttrChars: this.config.maxAttrChars,
       captureContent: this.config.captureContent,
@@ -384,7 +401,8 @@ export class TraceBuilder {
       // A turn is "done" when its terminal assistant message arrives and no
       // tools remain mid-flight. Tool-use loops emit multiple assistant
       // messages; we only close when nothing is pending.
-      if (turn.pendingTools.size === 0 && session.llmMap.size === 0) {
+      if (assistant.finish !== "tool-calls" && assistant.finish !== "tool_calls" &&
+          turn.pendingTools.size === 0 && session.llmMap.size === 0) {
         closeTurnSpan(turn.span, {
           outputText: turn.finalText,
           errored: Boolean(assistant.error),
@@ -424,7 +442,7 @@ export class TraceBuilder {
 
   onToolAfter(
     input: { tool: string; sessionID: string; callID: string; args: unknown },
-    output: { title?: string; output?: string; metadata?: unknown },
+    output: { title?: string; output?: string; metadata?: unknown; errored?: boolean },
   ): void {
     const session = this.sessions.get(input.sessionID);
     if (!session) return;
@@ -435,7 +453,7 @@ export class TraceBuilder {
       identity: open.identity,
       output: output?.output,
       metadata: output?.metadata,
-      errored: false,
+      errored: output.errored ?? false,
       config: this.config,
     });
     session.tools.delete(input.callID);
@@ -501,8 +519,8 @@ export class TraceBuilder {
 
   /** Close everything (used on dispose). */
   closeAll(): void {
-    for (const sessionID of [...this.sessions.keys()]) {
-      this.endSession(sessionID, false);
+    for (const [sessionID, session] of this.sessions) {
+      this._closeSession(session, sessionID, false);
     }
   }
 

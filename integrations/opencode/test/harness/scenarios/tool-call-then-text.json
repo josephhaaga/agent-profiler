@@ -6,7 +6,7 @@
         {
           "id": "call_abc123",
           "function": {
-            "name": "bash",
+            "name": "shell",
             "arguments": "{\"command\":\"echo hello\"}"
           }
         }

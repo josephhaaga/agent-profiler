@@ -43,18 +43,8 @@ RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" \
 ENV PATH="/root/.bun/bin:${PATH}"
 
 # ── opencode ───────────────────────────────────────────────────────────────────
-ARG OPENCODE_VERSION=1.17.7
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
-      TARBALL="opencode-linux-arm64.tar.gz"; \
-    else \
-      TARBALL="opencode-linux-x64.tar.gz"; \
-    fi && \
-    curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${TARBALL}" \
-      -o /tmp/opencode.tar.gz && \
-    tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin/ --strip-components=0 && \
-    chmod +x /usr/local/bin/opencode && \
-    rm /tmp/opencode.tar.gz
+ARG OPENCODE_VERSION=2.2.0
+RUN bun add --global --trust "@opencode/cli@${OPENCODE_VERSION}"
 
 # ── Monorepo packages needed by the server ─────────────────────────────────────
 WORKDIR /app
@@ -93,7 +83,7 @@ RUN git -C /workspace init \
 RUN mkdir -p /output
 
 # ── Env defaults ───────────────────────────────────────────────────────────────
-ENV PLUGIN_DIST=/plugin/dist/index.js
+ENV PLUGIN_DIST=/plugin
 ENV SERVER_SRC=/app/packages/server/src/index.ts
 ENV AGENT_PROFILER_WEB_DIST=/app/packages/web/dist
 ENV WORKSPACE=/workspace

@@ -96,6 +96,7 @@ async function serveStatic(pathname: string): Promise<Response | null> {
 
 const server = Bun.serve({
   port,
+  hostname: process.env.AGENT_PROFILER_HOST ?? "127.0.0.1",
 
   async fetch(req): Promise<Response> {
     const url = new URL(req.url);

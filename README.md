@@ -34,14 +34,19 @@ Add one line to your `opencode.json` (project-level or `~/.config/opencode/openc
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-agent-profiler"]
+  "plugins": ["opencode-agent-profiler"]
 }
 ```
 
-OpenCode auto-installs the plugin from npm on next startup. Restart OpenCode —
-traces will start flowing to `http://localhost:7070/v1/traces`.
+This integration targets **OpenCode V2 (2.2.0 or newer)**. V1 plugin releases
+(including `opencode-agent-profiler@0.3.0`) cannot run in V2; use a release
+containing the V2 port, or build this checkout and configure its absolute
+`integrations/opencode` directory as the plugin package.
 
-The plugin warns via `client.app.log` if the server is unreachable at startup.
+OpenCode installs package plugins automatically. Traces flow to
+`http://localhost:7070/v1/traces` after the plugin loads.
+
+The plugin warns in the server log if the collector is unreachable at startup.
 It never blocks the agent.
 
 ### 3. Open the UI
@@ -67,7 +72,7 @@ Point the plugin at a non-default host (e.g. a shared team server):
 
 ```json
 {
-  "plugin": [["opencode-agent-profiler", { "endpoint": "http://my-server:7070/v1/traces" }]]
+  "plugins": [{ "package": "opencode-agent-profiler", "options": { "endpoint": "http://my-server:7070/v1/traces" } }]
 }
 ```
 
@@ -91,6 +96,7 @@ AGENT_PROFILER_ENDPOINT=http://my-server:7070/v1/traces opencode
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AGENT_PROFILER_PORT` | `7070` | Server port |
+| `AGENT_PROFILER_HOST` | `127.0.0.1` | Bind address; opt in explicitly to non-loopback access |
 | `AGENT_PROFILER_DB_PATH` | `~/.agent-profiler/agent-profiler.sqlite` | SQLite database path |
 
 ## What it does
@@ -173,6 +179,26 @@ prompt.static_prefix.tokens
 ```
 
 These are emitted automatically by `opencode-agent-profiler`.
+
+### Capture scope and privacy
+
+The V2 integration captures primary agent-loop LLM calls, admitted user turns,
+assistant text, tool inputs/results/failures, and reported token/cache/cost
+metrics. Request context and prompt segments are isolated by session, including
+concurrent sessions and tool loops. Model latency ends at the provider response
+boundary, not after its tools finish. Each loaded location has an independent
+exporter that flushes when the plugin unloads.
+
+Capture starts when the plugin loads; it does not backfill earlier sessions.
+Auxiliary title, compaction, and transient generation model calls are not yet
+instrumented. Prompt token estimates in segments are character-based estimates,
+not provider billing counts. Long content is bounded by `maxAttrChars`.
+
+Content capture is enabled by default. Traces can contain confidential prompts,
+source code, and tool output. Keep the collector private; do not expose port 7070
+or enable a remote endpoint without reviewing the data policy. Use
+`captureContent: false`, `hideInputs`, or `hideOutputs` to reduce captured content.
+The plugin does not capture authentication headers.
 
 ## Development
 

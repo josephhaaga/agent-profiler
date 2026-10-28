@@ -60,5 +60,6 @@ export function closeTurnSpan(
     span.setAttribute(SemanticConventions.OUTPUT_MIME_TYPE, MimeType.TEXT);
   }
   span.setStatus({ code: errored ? SpanStatusCode.ERROR : SpanStatusCode.OK });
+  span.setAttribute("status", errored ? "ERROR" : "OK");
   span.end();
 }

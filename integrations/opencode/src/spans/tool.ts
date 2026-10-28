@@ -92,5 +92,6 @@ export function closeToolSpan(span: Span, args: CloseToolArgs): void {
   }
 
   span.setStatus({ code: errored ? SpanStatusCode.ERROR : SpanStatusCode.OK });
+  span.setAttribute("status", errored ? "ERROR" : "OK");
   span.end();
 }
