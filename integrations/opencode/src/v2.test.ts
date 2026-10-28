@@ -13,11 +13,11 @@ function harness(hideInputs = false) {
   const builder = new TraceBuilder({ tracer: provider.getTracer("v2-test"), config });
   const adapter = new V2Adapter(builder, config);
   const event = (type: string, data: object) => adapter.onEvent({ type, data, created: Date.now() } as PublicEvent);
-  const request = (sessionID: string, text: string, messageID = `user-${sessionID}`) => {
+  const request = (sessionID: string, text: string, messageID = `user-${sessionID}`, historyCount = 1) => {
     adapter.onUser(sessionID, { id: messageID, text, time: { created: Date.now() } });
     adapter.onContext({ sessionID, agent: "build", model: { providerID: "openai", id: "test-model" },
       system: [{ type: "text", text: "System instructions" }],
-      messages: [{ role: "user", content: [{ type: "text", text }] }],
+      messages: Array.from({ length: historyCount }, () => ({ role: "user", content: [{ type: "text", text }] })),
       tools: { shell: { description: "Run a command", input: { type: "object" } } }, options: {},
     } as unknown as SessionContext);
   };
@@ -31,6 +31,22 @@ function harness(hideInputs = false) {
 }
 
 describe("OpenCode V2 tracing", () => {
+  test("long histories do not exhaust the span attribute budget before usage and output arrive", async () => {
+    const h = harness();
+    h.request("a", "long-history", "user-a", 100);
+    h.start("a", "step-a");
+    h.event("session.text.ended", { sessionID: "a", assistantMessageID: "step-a", ordinal: 0, text: "answer" });
+    h.end("a", "step-a"); h.builder.closeAll();
+    const llm = h.exporter.getFinishedSpans().find((span) => span.attributes["openinference.span.kind"] === "LLM")!;
+    expect(llm.attributes["llm.token_count.prompt"]).toBe(180);
+    expect(llm.attributes["llm.token_count.completion"]).toBe(20);
+    expect(llm.attributes["llm.finish_reason"]).toBe("stop");
+    expect(llm.attributes["llm.output_messages"]).toContain("answer");
+    expect(JSON.parse(String(llm.attributes["llm.input_messages"]))).toHaveLength(101);
+    expect(llm.attributes["prompt.segments"]).toBeDefined();
+    await h.provider.shutdown();
+  });
+
   test("captures inputs, outputs, usage, and enriched attributes through a tool loop", async () => {
     const h = harness();
     h.request("session-a", "Inspect the project");

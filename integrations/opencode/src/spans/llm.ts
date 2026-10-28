@@ -67,7 +67,10 @@ export function setLlmInputMessages(
   if (config.hideInputs) return;
   // The profiler collector consumes the aggregate JSON as well as OI's indexed keys.
   span.setAttribute("llm.input_messages", safeJson(messages.map((message) => ({ message }))));
-  messages.forEach((m, i) => {
+  // OTel defaults to 128 attributes per span. The aggregate above preserves
+  // every message; cap the redundant indexed view so late-arriving output,
+  // token usage, cost, and prompt-enrichment attributes are never crowded out.
+  messages.slice(0, 16).forEach((m, i) => {
     const base = `${SemanticConventions.LLM_INPUT_MESSAGES}.${i}.${SemanticConventions.MESSAGE_ROLE}`;
     span.setAttribute(base, m.role);
     if (m.content !== undefined) {
@@ -78,7 +81,7 @@ export function setLlmInputMessages(
         config.maxAttrChars,
       );
     }
-    (m.toolCalls ?? []).forEach((tc, j) => {
+    (m.toolCalls ?? []).slice(0, 1).forEach((tc, j) => {
       const tcBase = `${SemanticConventions.LLM_INPUT_MESSAGES}.${i}.${SemanticConventions.MESSAGE_TOOL_CALLS}.${j}`;
       if (tc.id) span.setAttribute(`${tcBase}.${SemanticConventions.TOOL_CALL_ID}`, tc.id);
       if (tc.name)
@@ -118,7 +121,7 @@ export function closeLlmSpan(span: Span, args: CloseLlmArgs): void {
         config.maxAttrChars,
       );
     }
-    (outputMessage.toolCalls ?? []).forEach((tc, j) => {
+    (outputMessage.toolCalls ?? []).slice(0, 4).forEach((tc, j) => {
       const tcBase = `${SemanticConventions.LLM_OUTPUT_MESSAGES}.0.${SemanticConventions.MESSAGE_TOOL_CALLS}.${j}`;
       if (tc.id) span.setAttribute(`${tcBase}.${SemanticConventions.TOOL_CALL_ID}`, tc.id);
       if (tc.name)

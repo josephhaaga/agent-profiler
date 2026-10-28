@@ -108,6 +108,19 @@ function makeOtlpTrace(overrides: Partial<{
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 describe("ingestOtlpPayload", () => {
+  test("spans flushed before their parent turn remain attached when it arrives later", async () => {
+    const store = new Store();
+    const complete = makeOtlpTrace();
+    const all = complete.resourceSpans![0]!.scopeSpans![0]!.spans!;
+    const batch = (indices: number[]): OtlpExportRequest => ({ resourceSpans: [{ scopeSpans: [{ spans: indices.map((i) => all[i]!) }] }] });
+    await ingestOtlpPayload(batch([2, 3]), store);
+    await ingestOtlpPayload(batch([0, 1]), store);
+    expect(store.listLlmCalls("turn001")).toHaveLength(1);
+    expect(store.listToolCalls("turn001")).toHaveLength(1);
+    expect(store.getTurn("turn001")!.promptTokens).toBe(1200);
+    expect(store.getSession("test-session")!.llmCallCount).toBe(1);
+  });
+
   test("ingests session, turn, LLM call, and tool call", async () => {
     const store = new Store();
     const result = await ingestOtlpPayload(makeOtlpTrace(), store);

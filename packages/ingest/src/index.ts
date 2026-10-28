@@ -396,9 +396,10 @@ async function processOrphanBatch(
     const idx = store.listTurns(sessionId).length;
     await processTurn(root, sessionId, idx, store, result, emitter);
   } else {
-    // Bare LLM or tool span arriving outside a turn — attach directly to session.
-    // Use the span id as a synthetic turnId so FK constraints are satisfied.
-    const syntheticTurnId = root.span.id;
+    // Preserve the actual parent ID when children flush before their turn.
+    // Inventing a turn ID here permanently strands those calls: the parent
+    // arriving in a later batch cannot reattach or aggregate them.
+    const syntheticTurnId = root.span.parentId ?? root.span.id;
     for (const child of [root, ...root.children]) {
       if (child.span.kind === "llm") {
         await processLlmCall(child, syntheticTurnId, sessionId, store, result, emitter);
