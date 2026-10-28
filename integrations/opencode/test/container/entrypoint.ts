@@ -6,7 +6,7 @@
  * artifacts to /output/ when done. All CLI flags are passed through to run-e2e.
  *
  * Environment variables (set in Dockerfile, override at runtime):
- *   PLUGIN_DIST         Path to the pre-built plugin dist/index.js
+ *   PLUGIN_DIST         Path to the pre-built plugin package directory
  *   SERVER_SRC          Path to packages/server/src/index.ts
  *   AGENT_PROFILER_WEB_DIST  Path to packages/web/dist
  *   WORKSPACE           Directory opencode operates in (the fake codebase)
@@ -17,7 +17,7 @@ import { mkdirSync, cpSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
-const PLUGIN_DIST = process.env["PLUGIN_DIST"] ?? "/plugin/dist/index.js";
+const PLUGIN_DIST = process.env["PLUGIN_DIST"] ?? "/plugin";
 const SERVER_SRC = process.env["SERVER_SRC"] ?? "/app/packages/server/src/index.ts";
 const WEB_DIST = process.env["AGENT_PROFILER_WEB_DIST"] ?? "/app/packages/web/dist";
 const WORKSPACE = process.env["WORKSPACE"] ?? "/workspace";
@@ -34,7 +34,6 @@ const env: Record<string, string> = {
   AGENT_PROFILER_SERVER_SRC: SERVER_SRC,
   AGENT_PROFILER_WEB_DIST: WEB_DIST,
   AGENT_PROFILER_WORKSPACE: WORKSPACE,
-  AGENT_PROFILER_WEB_DIST: WEB_DIST,
 };
 
 // Default --fixture-dir to the container output dir if --record is passed

@@ -83,6 +83,12 @@ jobs:
             --record ci-run \
             "${{ github.event.inputs.prompt || 'Say the word PING and nothing else.' }}"
 
+      - name: Make generated container artifacts readable by the runner
+        if: always()
+        # Runtime traces stay private (0600). Docker writes as root; transfer
+        # ownership of this test-only output directory instead of widening modes.
+        run: sudo chown -R "$(id -u):$(id -g)" e2e-output
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
