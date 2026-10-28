@@ -13,6 +13,7 @@ interface UsageRecord extends CaptureRecord {
 
 export interface SessionRecord extends UsageRecord {
   id: string;
+  title?: string;
   harness: HarnessKind;
   agent?: string;
   model?: string;

@@ -17,7 +17,7 @@ while (!output.includes("agent-profiler listening on")) {
 }
 const base = output.match(/http:\/\/localhost:(\d+)/)![0];
 const saved = {
-  info: { id: "ses_saved", time: { created: 1000, updated: 4000 }, location: { directory: "/project" } },
+  info: { id: "ses_saved", title: "Investigate file contents", time: { created: 1000, updated: 4000 }, location: { directory: "/project" } },
   messages: [
     { type: "user", id: "msg_user", text: "Read a file", time: { created: 1000 } },
     { type: "assistant", id: "msg_answer", model: { id: "test-model", providerID: "test" },
@@ -32,9 +32,11 @@ const exports = new Map<string, any>([[saved.info.id, saved]]);
 const source = Bun.serve({ port: 0, fetch(req) {
   const url = new URL(req.url);
   const all = [...exports.values()].filter(s => Boolean(s.info.time.archived) === (url.searchParams.get("archived") === "true"));
-  const offset = Number(url.searchParams.get("cursor") ?? 0);
+  const cursor = url.searchParams.get("cursor");
+  const offset = cursor == null ? 0 : Number(cursor);
+  if (!Number.isInteger(offset)) return Response.json({ error: "Invalid cursor" }, { status: 400 });
   return Response.json(url.pathname === "/api/session"
-    ? { data: all.slice(offset, offset + 1).map(s => s.info), cursor: offset + 1 < all.length ? String(offset + 1) : undefined }
+    ? { data: all.slice(offset, offset + 1).map(s => s.info), cursor: { previous: offset > 0 ? String(offset - 1) : null, next: offset + 1 < all.length ? String(offset + 1) : null } }
     : { data: exports.get(url.pathname.split("/")[4]!) });
 } });
 afterAll(() => { collector.kill(); source.stop(true); rmSync(dir, { recursive: true, force: true }); });
@@ -50,7 +52,7 @@ const get = async (path: string) => (await fetch(base + path)).json() as Promise
 test("CLI imports recorded usage and tools under the original OpenCode session ID", async () => {
   await runImport();
   const { session } = await get("/api/sessions/ses_saved");
-  expect(session).toMatchObject({ id: "ses_saved", llmCallCount: 1, toolCallCount: 1, promptTokens: 105, cacheReadTokens: 80, costTotal: 0.02 });
+  expect(session).toMatchObject({ id: "ses_saved", title: "Investigate file contents", llmCallCount: 1, toolCallCount: 1, promptTokens: 105, cacheReadTokens: 80, costTotal: 0.02 });
   const { turns } = await get("/api/sessions/ses_saved/turns");
   expect(turns).toHaveLength(1);
   expect(turns[0].userText).toBe("Read a file");
@@ -98,7 +100,7 @@ test("live capture and import share message/tool identities in both arrival orde
     await runImport();
     if (!liveFirst) await live();
     await runImport();
-    expect((await get(`/api/sessions/${id}`)).session).toMatchObject({ llmCallCount: 1, toolCallCount: 1, costTotal: 0.02, turnCount: 1 });
+    expect((await get(`/api/sessions/${id}`)).session).toMatchObject({ title: "Investigate file contents", llmCallCount: 1, toolCallCount: 1, costTotal: 0.02, turnCount: 1 });
     const { turns } = await get(`/api/sessions/${id}/turns`);
     const { llmCalls } = await get(`/api/turns/${turns[0].id}/llm-calls`);
     expect(llmCalls[0].model).toBe("live-model");
@@ -130,7 +132,7 @@ test("ambiguous legacy overlap is explicitly skipped instead of double-counted",
   const attributes = Object.entries({ "session.id": id, "openinference.span.kind": "LLM" }).map(([key, stringValue]) => ({ key, value: { stringValue } }));
   await fetch(base + "/v1/traces", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resourceSpans: [{ scopeSpans: [{ spans: [{ traceId: "legacy", spanId: "legacy", parentSpanId: "legacy-parent", name: "chat", startTimeUnixNano: "2000000000", attributes }] }] }] }) });
   expect(await runImport()).toContain(`Skipped ${id}: existing live records lack OpenCode message/tool IDs`);
-  expect((await get(`/api/sessions/${id}`)).session.llmCallCount).toBe(1);
+  expect((await get(`/api/sessions/${id}`)).session).toMatchObject({ title: "Investigate file contents", llmCallCount: 1 });
 });
 
 test("a failed export import leaves no partially written session", async () => {

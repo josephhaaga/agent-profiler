@@ -1,4 +1,5 @@
 import { Service } from "@opencode/client/service";
+import type { SessionsResponse, SessionTransferData } from "@opencode/client";
 
 export async function importOpenCode(args: string[], defaultPort: number): Promise<void> {
   const options = new Map<string, string>();
@@ -14,10 +15,10 @@ export async function importOpenCode(args: string[], defaultPort: number): Promi
   const source = options.get("--opencode-url") ?? endpoint!.url;
   const headers = endpoint ? Service.headers(endpoint) : process.env.OPENCODE_TOKEN
     ? { authorization: `Bearer ${process.env.OPENCODE_TOKEN}` } : {};
-  async function read(path: string): Promise<any> {
+  async function read<T>(path: string): Promise<T> {
     const res = await fetch(new URL(path, source), { headers, signal: AbortSignal.timeout(60_000) });
     if (!res.ok) throw new Error(`OpenCode ${path}: HTTP ${res.status}`);
-    return res.json();
+    return res.json() as Promise<T>;
   }
   const target = options.get("--endpoint") ?? `http://127.0.0.1:${defaultPort}`;
   // Check compatibility before reading potentially sensitive exports.
@@ -28,7 +29,7 @@ export async function importOpenCode(args: string[], defaultPort: number): Promi
   async function transfer(id: string): Promise<void> {
     if (seen.has(id)) return;
     seen.add(id);
-    const exported = await read(`/api/experimental/session/${encodeURIComponent(id)}/export?sanitize=false`);
+    const exported = await read<{ data: SessionTransferData }>(`/api/experimental/session/${encodeURIComponent(id)}/export?sanitize=false`);
     const res = await fetch(new URL("/api/import/opencode", target), {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(exported.data), signal: AbortSignal.timeout(120_000),
@@ -47,10 +48,11 @@ export async function importOpenCode(args: string[], defaultPort: number): Promi
       do {
         const query = new URLSearchParams({ limit: "100", order: "asc", archived });
         if (cursor) query.set("cursor", cursor);
-        const page = await read(`/api/session?${query}`);
+        const page = await read<SessionsResponse>(`/api/session?${query}`);
         if (!Array.isArray(page.data)) throw new Error("Unexpected OpenCode session-list response");
         for (const session of page.data) await transfer(session.id);
-        cursor = page.cursor ?? undefined;
+        cursor = page.cursor?.next ?? undefined;
+        if (cursor != null && typeof cursor !== "string") throw new Error("Unexpected OpenCode next-page cursor");
         if (cursor && cursors.has(cursor)) throw new Error("OpenCode returned a repeated pagination cursor");
         if (cursor) cursors.add(cursor);
       } while (cursor);

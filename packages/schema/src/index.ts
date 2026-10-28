@@ -35,6 +35,7 @@ export interface ToolDefinition {
 
 export interface SessionRecord {
   id: string;
+  title?: string;
   harness: HarnessKind;
   agent?: string;
   model?: string;

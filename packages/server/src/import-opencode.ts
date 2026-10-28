@@ -9,7 +9,7 @@ type Message = {
   model?: { id: string; providerID: string }; tokens?: Usage; cost?: number;
   finish?: string; error?: unknown; content?: Array<Record<string, any>>;
 };
-type Export = { info: { id: string; time: { created: number; updated: number }; location?: { directory?: string }; agent?: string }; messages: Message[] };
+type Export = { info: { id: string; title?: string; time: { created: number; updated: number }; location?: { directory?: string }; agent?: string }; messages: Message[] };
 const iso = (time: number) => new Date(time).toISOString();
 const metrics = ["promptTokens", "completionTokens", "reasoningTokens", "cacheReadTokens", "cacheWriteTokens"];
 const identity = (session: string, id: string) => `opencode:${session}:${id}`;
@@ -18,6 +18,7 @@ const identity = (session: string, id: string) => `opencode:${session}:${id}`;
 export function validateExport(value: unknown): asserts value is Export {
   const data = value as Export;
   if (!data?.info?.id?.startsWith("ses_") || !Number.isFinite(data.info.time?.created) || !Array.isArray(data.messages)) throw new Error("Invalid OpenCode V2 export");
+  if (data.info.title != null && typeof data.info.title !== "string") throw new Error("Invalid session title");
   const ids = new Set<string>();
   const toolIds = new Set<string>();
   for (const m of data.messages) {
@@ -48,6 +49,8 @@ export function importOpenCodeExport(data: Export, store: Store): { sessionId: s
   // silently merge distinct requests, so refuse ambiguous overlap explicitly.
   if ([...existingCalls.values()].some(c => !c.id.startsWith(`opencode:${sessionId}:`)) ||
       [...existingTools.values()].some(c => !c.id.startsWith(`opencode:${sessionId}:`))) {
+    // Session metadata is safe to refresh even when usage cannot be merged.
+    if (previous && data.info.title != null) store.upsertSession({ ...previous, title: data.info.title });
     return { sessionId, skipped: "existing live records lack OpenCode message/tool IDs; cannot deduplicate safely" };
   }
   const blob = (value: unknown, mime = "application/json") => {
@@ -58,9 +61,9 @@ export function importOpenCodeExport(data: Export, store: Store): { sessionId: s
   };
   const imported = { source: "opencode-import", partial: true, promptComposition: "unavailable", toolSchemas: "unavailable" };
   const transaction = store.db.transaction(() => {
-    store.upsertSession(previous ?? { id: sessionId, harness: "opencode", agent: data.info.agent, project: data.info.location?.directory,
+    store.upsertSession({ ...(previous ?? { id: sessionId, harness: "opencode", agent: data.info.agent, project: data.info.location?.directory,
       startedAt: iso(data.info.time.created), turnCount: 0, llmCallCount: 0, toolCallCount: 0,
-      promptTokens: 0, completionTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costTotal: 0 });
+      promptTokens: 0, completionTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costTotal: 0 }), title: data.info.title ?? previous?.title });
     // Preserve a lossless source snapshot; it is not an outgoing model prompt.
     const sourceRef = blob(data);
     let current: TurnRecord | undefined;

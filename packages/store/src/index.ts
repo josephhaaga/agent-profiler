@@ -17,6 +17,7 @@ export interface StoreOptions {
 function rowToSession(row: Record<string, unknown>): SessionRecord {
   return {
     id: String(row.id),
+    title: row.title != null ? String(row.title) : undefined,
     harness: row.harness as SessionRecord["harness"],
     agent: row.agent != null ? String(row.agent) : undefined,
     model: row.model != null ? String(row.model) : undefined,
@@ -247,6 +248,22 @@ export class Store {
         record_id text not null
       );
     `);
+    const columns = this.db.query("pragma table_info(sessions)").all() as Array<{ name: string }>;
+    if (!columns.some(c => c.name === "title")) {
+      this.db.transaction(() => {
+        this.db.exec("alter table sessions add column title text");
+        // 0.2.0 already retained titles inside lossless export snapshots. Recover
+        // them locally so existing imports gain titles without reimporting.
+        this.db.exec(`update sessions set title = (
+          select case when json_valid(b.bytes) then
+            case when json_type(b.bytes, '$.info.title') = 'text'
+              then json_extract(b.bytes, '$.info.title') end end
+          from record_capture c join blobs b
+            on b.ref = json_extract(c.capture_json, '$.sourceRef')
+          where c.id = sessions.id
+        ) where title is null`);
+      })();
+    }
   }
 
   // ── Sessions ──────────────────────────────────────────────────────────────
@@ -290,12 +307,12 @@ export class Store {
         id, harness, agent, model, project, started_at, ended_at,
         turn_count, llm_call_count, tool_call_count,
         prompt_tokens, completion_tokens, reasoning_tokens,
-        cache_read_tokens, cache_write_tokens, cost_total, end_reason
+        cache_read_tokens, cache_write_tokens, cost_total, end_reason, title
       ) values (
         $id, $harness, $agent, $model, $project, $startedAt, $endedAt,
         $turnCount, $llmCallCount, $toolCallCount,
         $promptTokens, $completionTokens, $reasoningTokens,
-        $cacheReadTokens, $cacheWriteTokens, $costTotal, $endReason
+        $cacheReadTokens, $cacheWriteTokens, $costTotal, $endReason, $title
       ) on conflict(id) do update set
         harness=excluded.harness,
         agent=excluded.agent,
@@ -312,9 +329,11 @@ export class Store {
         cache_read_tokens=excluded.cache_read_tokens,
         cache_write_tokens=excluded.cache_write_tokens,
         cost_total=excluded.cost_total,
-        end_reason=excluded.end_reason
+        end_reason=excluded.end_reason,
+        title=coalesce(excluded.title, sessions.title)
     `).run({
       $id: session.id,
+      $title: session.title ?? null,
       $harness: session.harness,
       $agent: session.agent ?? null,
       $model: session.model ?? null,

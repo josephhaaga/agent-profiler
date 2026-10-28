@@ -159,6 +159,7 @@ function SessionsView({ onSelect }: { onSelect: (id: string) => void }) {
       ? sessions.filter(
           (s) =>
             s.id.includes(filter) ||
+            s.title?.toLowerCase().includes(filter.toLowerCase()) ||
             s.agent?.toLowerCase().includes(filter.toLowerCase()) ||
             s.model?.toLowerCase().includes(filter.toLowerCase()) ||
             s.harness.includes(filter)
@@ -195,7 +196,7 @@ function SessionsView({ onSelect }: { onSelect: (id: string) => void }) {
         <h1 className="text-lg font-semibold">Sessions</h1>
         <Input
           className="w-64"
-          placeholder="Filter by id, agent, model, harness…"
+          placeholder="Filter sessions…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
@@ -210,6 +211,7 @@ function SessionsView({ onSelect }: { onSelect: (id: string) => void }) {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
+                <SortHead col="title" label="Session" />
                 <SortHead col="startedAt" label="Started" />
                 <SortHead col="harness" label="Harness" />
                 <SortHead col="agent" label="Agent" />
@@ -229,6 +231,10 @@ function SessionsView({ onSelect }: { onSelect: (id: string) => void }) {
                     className="cursor-pointer"
                     onClick={() => onSelect(s.id)}
                   >
+                    <TableCell className="min-w-48 max-w-sm">
+                      <span className="block truncate font-medium" title={s.title || "Untitled session"}>{s.title || "Untitled session"}</span>
+                      <code className="block truncate text-[11px] text-muted-foreground" title={s.id}>{s.id}</code>
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{ago(s.startedAt)}</TableCell>
                     <TableCell>
                       {/* Tufte: left-border color strip instead of full badge pill */}
@@ -263,7 +269,7 @@ function SessionsView({ onSelect }: { onSelect: (id: string) => void }) {
               })}
               {!sorted.length && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-12">
+                  <TableCell colSpan={9} className="text-center text-muted-foreground py-12">
                     No sessions yet. Point your harness OTLP exporter at{" "}
                     <code className="text-xs bg-secondary px-1 py-0.5 rounded">
                       http://localhost:7070/v1/traces
@@ -539,8 +545,8 @@ function SessionDetailView({
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-0.5">
-          <h1 className="text-lg font-semibold">Session</h1>
+        <div className="space-y-0.5 min-w-0 max-w-3xl">
+          <h1 className="text-lg font-semibold break-words">{session.title || "Untitled session"}</h1>
           <code className="text-[11px] text-muted-foreground font-mono">{session.id}</code>
         </div>
         <div className="flex gap-2">
@@ -1412,13 +1418,14 @@ function Omnibar({
     const sess = sessions
       .filter((s) =>
         s.id.toLowerCase().includes(q) ||
+        (s.title ?? "").toLowerCase().includes(q) ||
         (s.agent ?? "").toLowerCase().includes(q) ||
         (s.model ?? "").toLowerCase().includes(q)
       )
       .slice(0, 8)
       .map((s) => ({
-        label: `${s.agent ?? s.id.slice(0, 8)} — ${s.model ?? "?"}`,
-        sublabel: ago(s.startedAt),
+        label: s.title || `${s.agent ?? s.id.slice(0, 8)} — ${s.model ?? "?"}`,
+        sublabel: `${s.id} · ${ago(s.startedAt)}`,
         action: `session:${s.id}`,
         icon: LayoutDashboard,
       }));
