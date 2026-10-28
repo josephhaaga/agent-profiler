@@ -36,6 +36,7 @@ import type {
   TurnRecord,
 } from "@agent-profiler/schema";
 import type { Store } from "@agent-profiler/store";
+import { createHash } from "node:crypto";
 
 // ── Raw OTLP JSON types (minimal subset we read) ─────────────────────────────
 
@@ -58,7 +59,7 @@ interface OtlpSpan {
   startTimeUnixNano: string;
   endTimeUnixNano?: string;
   attributes?: OtlpKeyValue[];
-  status?: { code?: number; message?: string };
+  status?: { code?: number | string; message?: string };
 }
 
 interface OtlpResourceSpans {
@@ -70,6 +71,90 @@ interface OtlpResourceSpans {
 
 export interface OtlpExportRequest {
   resourceSpans?: OtlpResourceSpans[];
+}
+
+/** Malformed client data; callers should return HTTP 400, not retryable 500. */
+export class IngestValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IngestValidationError";
+  }
+}
+
+function object(value: unknown, label: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new IngestValidationError(`Invalid ${label}`);
+  return value as Record<string, unknown>;
+}
+
+function array(value: unknown, label: string): unknown[] {
+  if (!Array.isArray(value)) throw new IngestValidationError(`Invalid ${label}`);
+  return value;
+}
+
+function validateAttributes(value: unknown): void {
+  if (value === undefined) return;
+  for (const entry of array(value, "attributes")) {
+    const kv = object(entry, "attribute");
+    if (typeof kv.key !== "string") throw new IngestValidationError("Invalid attribute key");
+    validateValue(kv.value);
+  }
+}
+
+function validateValue(value: unknown): void {
+  const v = object(value, "attribute value");
+  if (Object.keys(v).length !== 1) throw new IngestValidationError("Attribute values must have one type");
+  if ("stringValue" in v && typeof v.stringValue === "string") return;
+  if ("boolValue" in v && typeof v.boolValue === "boolean") return;
+  if ("doubleValue" in v && typeof v.doubleValue === "number" && Number.isFinite(v.doubleValue)) return;
+  if ("intValue" in v && ((typeof v.intValue === "string" && /^[+-]?\d+$/.test(v.intValue)) ||
+      (typeof v.intValue === "number" && Number.isFinite(v.intValue) && Number.isInteger(v.intValue)))) return;
+  if ("arrayValue" in v) {
+    const values = object(v.arrayValue, "array value").values;
+    if (values !== undefined) for (const item of array(values, "array values")) validateValue(item);
+    return;
+  }
+  if ("kvlistValue" in v) {
+    validateAttributes(object(v.kvlistValue, "key-value list").values);
+    return;
+  }
+  throw new IngestValidationError("Invalid attribute value");
+}
+
+function validateTimestamp(value: unknown, label: string): bigint {
+  if (typeof value !== "string" || !/^\d+$/.test(value)) throw new IngestValidationError(`Invalid ${label}`);
+  const nano = BigInt(value);
+  if (!Number.isFinite(new Date(Number(nano / 1_000_000n)).getTime())) throw new IngestValidationError(`Out-of-range ${label}`);
+  return nano;
+}
+
+function validatePayload(payload: unknown): void {
+  const request = object(payload, "OTLP request");
+  if (request.resourceSpans === undefined) return;
+  for (const entry of array(request.resourceSpans, "resourceSpans")) {
+    const resource = object(entry, "resource spans");
+    if (resource.resource !== undefined) validateAttributes(object(resource.resource, "resource").attributes);
+    if (resource.scopeSpans === undefined) continue;
+    for (const entry of array(resource.scopeSpans, "scopeSpans")) {
+      const scope = object(entry, "scope spans");
+      if (scope.spans === undefined) continue;
+      for (const entry of array(scope.spans, "spans")) {
+        const span = object(entry, "span");
+        if (typeof span.spanId !== "string" || !span.spanId || (span.parentSpanId !== undefined && typeof span.parentSpanId !== "string")) {
+          throw new IngestValidationError("Invalid span identity");
+        }
+        const start = validateTimestamp(span.startTimeUnixNano, "startTimeUnixNano");
+        if (span.endTimeUnixNano !== undefined && validateTimestamp(span.endTimeUnixNano, "endTimeUnixNano") < start) {
+          throw new IngestValidationError("Span ends before it starts");
+        }
+        validateAttributes(span.attributes);
+        if (span.status !== undefined) {
+          const status = object(span.status, "span status");
+          if ((status.code !== undefined && normalizeStatusCode(status.code as number | string) === undefined) ||
+              (status.message !== undefined && typeof status.message !== "string")) throw new IngestValidationError("Invalid span status");
+        }
+      }
+    }
+  }
 }
 
 // ── Attribute helpers ─────────────────────────────────────────────────────────
@@ -87,8 +172,8 @@ function resolveValue(v: OtlpKeyValue["value"]): unknown {
   if ("intValue" in v) return Number(v.intValue);
   if ("doubleValue" in v) return v.doubleValue;
   if ("boolValue" in v) return v.boolValue;
-  if ("arrayValue" in v) return v.arrayValue.values.map(resolveValue);
-  if ("kvlistValue" in v) return attrMap(v.kvlistValue.values);
+  if ("arrayValue" in v) return (v.arrayValue.values ?? []).map(resolveValue);
+  if ("kvlistValue" in v) return attrMap(v.kvlistValue.values ?? []);
   return null;
 }
 
@@ -99,12 +184,12 @@ function str(attrs: Record<string, unknown>, key: string): string | undefined {
 
 function num(attrs: Record<string, unknown>, key: string): number {
   const v = attrs[key];
-  if (typeof v === "number") return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    return isNaN(n) ? 0 : n;
+  if (v === undefined) return 0;
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  if (!Number.isFinite(n) || n < 0 || (key.startsWith("llm.token_count.") && !Number.isSafeInteger(n))) {
+    throw new IngestValidationError(`Invalid nonnegative ${key.startsWith("llm.token_count.") ? "integer" : "number"}: ${key}`);
   }
-  return 0;
+  return n;
 }
 
 function nanoToMs(nano: string | undefined): number {
@@ -122,13 +207,9 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-/** Simple SHA-256 via Web Crypto (available in Bun). */
-async function sha256hex(text: string): Promise<string> {
-  const enc = new TextEncoder();
-  const buf = await crypto.subtle.digest("SHA-256", enc.encode(text));
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+/** Synchronous hashing keeps ingestion's SQLite transaction free of async yields. */
+function sha256hex(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 // ── Per-span normalizer ───────────────────────────────────────────────────────
@@ -142,10 +223,21 @@ interface NormalizedSpan {
   latencyMs: number;
   kind: string; // openinference.span.kind lowercased
   attrs: Record<string, unknown>;
+  statusCode?: "STATUS_CODE_UNSET" | "STATUS_CODE_OK" | "STATUS_CODE_ERROR";
+  statusMessage?: string;
 }
 
 function normalizeSpan(span: OtlpSpan): NormalizedSpan {
   const attrs = attrMap(span.attributes ?? []);
+  // Parse supplied usage even if this span will not become a model-call record.
+  // A present but invalid value must never acquire complete/recorded-zero coverage.
+  for (const key of ["llm.token_count.prompt", "llm.token_count.completion", "llm.token_count.total",
+    "llm.token_count.completion_details.reasoning", "llm.token_count.prompt_details.cache_read",
+    "llm.token_count.prompt_details.cache_write", "llm.cost.total"]) num(attrs, key);
+  const tags = attrs["tag.tags"];
+  if (tags !== undefined && (!Array.isArray(tags) || tags.some(tag => typeof tag !== "string"))) {
+    throw new IngestValidationError("Invalid tool tag list");
+  }
   const kindRaw = str(attrs, "openinference.span.kind") ?? "";
   return {
     id: span.spanId,
@@ -159,7 +251,124 @@ function normalizeSpan(span: OtlpSpan): NormalizedSpan {
         : 0,
     kind: kindRaw.toLowerCase(),
     attrs,
+    statusCode: normalizeStatusCode(span.status?.code),
+    statusMessage: span.status?.message,
   };
+}
+
+function normalizeStatusCode(code: number | string | undefined): NormalizedSpan["statusCode"] {
+  if (code === 0 || code === "0" || code === "STATUS_CODE_UNSET") return "STATUS_CODE_UNSET";
+  if (code === 1 || code === "1" || code === "STATUS_CODE_OK" || code === "OK") return "STATUS_CODE_OK";
+  if (code === 2 || code === "2" || code === "STATUS_CODE_ERROR" || code === "ERROR") return "STATUS_CODE_ERROR";
+  return undefined;
+}
+
+interface ResolvedStatus {
+  status?: string;
+  endSignal?: TurnRecord["endSignal"];
+  isError: boolean;
+  capture: Record<string, unknown>;
+}
+
+function isErrorStatus(status: string | undefined): boolean {
+  return status?.toUpperCase() === "ERROR";
+}
+
+function isSuccessStatus(status: string | undefined): boolean {
+  const normalized = status?.toUpperCase();
+  return normalized === "OK" || normalized === "COMPLETED" || normalized === "COMPLETE";
+}
+
+function validEndSignal(value: string | undefined): TurnRecord["endSignal"] | undefined {
+  return value === "completed" || value === "user_stopped" || value === "error"
+    ? value
+    : undefined;
+}
+
+function resolveStatus(
+  span: NormalizedSpan,
+  previousCapture: Record<string, unknown> | undefined,
+  previousStatus?: string,
+  previousEndSignal?: TurnRecord["endSignal"],
+): ResolvedStatus {
+  const customStatus = str(span.attrs, "status");
+  const endSignal = validEndSignal(str(span.attrs, "end_signal"));
+  const hasReportedStatus = span.statusCode !== undefined || customStatus !== undefined;
+  const isSuccess = span.statusCode === "STATUS_CODE_OK" || isSuccessStatus(customStatus);
+  const isError = span.statusCode === "STATUS_CODE_ERROR"
+    || isErrorStatus(customStatus)
+    || (!hasReportedStatus && (previousCapture?.statusCode === "STATUS_CODE_ERROR" || isErrorStatus(previousStatus) || previousEndSignal === "error"));
+
+  let status = isError
+    ? "ERROR"
+    : span.statusCode === "STATUS_CODE_OK"
+      ? (customStatus ?? "OK")
+      : customStatus ?? previousStatus;
+
+  let resolvedEndSignal: TurnRecord["endSignal"];
+  if (isError) resolvedEndSignal = "error";
+  else if (endSignal) resolvedEndSignal = endSignal;
+  else if (isSuccess) resolvedEndSignal = "completed";
+  else if (customStatus !== undefined) resolvedEndSignal = isErrorStatus(customStatus) ? "error" : previousEndSignal;
+  else if (hasReportedStatus && span.statusCode === "STATUS_CODE_UNSET") resolvedEndSignal = previousEndSignal;
+  else resolvedEndSignal = previousEndSignal ?? (hasReportedStatus ? undefined : "completed");
+
+  if (status === "ERROR") status = "ERROR";
+  const hasExplicitCode = span.statusCode !== undefined && span.statusCode !== "STATUS_CODE_UNSET";
+  const statusCode = isError
+    ? "STATUS_CODE_ERROR"
+    : hasExplicitCode
+      ? span.statusCode
+      : isSuccessStatus(customStatus)
+        ? "STATUS_CODE_OK"
+      : (previousCapture?.statusCode as NormalizedSpan["statusCode"] | undefined)
+        ?? span.statusCode;
+  const capture: Record<string, unknown> = {};
+  if (statusCode !== undefined) capture.statusCode = statusCode;
+  else if (hasReportedStatus) capture.statusCode = null;
+
+  if (hasExplicitCode) {
+    capture.statusMessage = span.statusMessage ?? null;
+    capture.customStatus = customStatus ?? null;
+  } else if (customStatus !== undefined) {
+    capture.customStatus = customStatus;
+  } else if (span.statusCode === "STATUS_CODE_UNSET") {
+    capture.statusMessage = previousCapture?.statusMessage ?? null;
+    capture.customStatus = previousCapture?.customStatus ?? null;
+  }
+
+  if (hasExplicitCode && span.statusCode !== statusCode) capture.reportedStatusCode = span.statusCode;
+  else if (!hasReportedStatus && previousCapture?.reportedStatusCode !== undefined) {
+    capture.reportedStatusCode = previousCapture.reportedStatusCode;
+  } else if (hasExplicitCode) capture.reportedStatusCode = null;
+
+  if (!hasReportedStatus) {
+    for (const key of ["statusMessage", "customStatus", "reportedStatusCode"] as const) {
+      if (previousCapture?.[key] !== undefined) capture[key] = previousCapture[key];
+    }
+  }
+
+  return { status, endSignal: resolvedEndSignal, isError, capture };
+}
+
+function setCaptureWithCoverage(
+  store: Store,
+  id: string,
+  unknownMetrics: string[],
+  metadata: Record<string, unknown> = {},
+): void {
+  const merged = {
+    ...(store.getCapture(id) ?? { source: "live", partial: false }),
+    // A new live span is the newest provenance even when an import seeded this
+    // identity first. Keep its other evidence, including status and coverage.
+    source: "live",
+    unknownMetrics,
+  } as Record<string, unknown>;
+  for (const [key, value] of Object.entries(metadata)) {
+    if (value === null) delete merged[key];
+    else merged[key] = value;
+  }
+  store.setCapture(id, merged);
 }
 
 // ── Tree builder ──────────────────────────────────────────────────────────────
@@ -199,6 +408,27 @@ export async function ingestOtlpPayload(
   store: Store,
   emitter?: (event: { type: string; data: unknown }) => void
 ): Promise<IngestResult> {
+  validatePayload(payload);
+  const events: Array<{ type: string; data: unknown }> = [];
+  const result = store.db.transaction(() => ingestValidatedPayload(payload, store, event => events.push(event)))();
+  // No observer can see a write from a rolled-back request. Publish committed
+  // snapshots only, rather than the intermediate zero-filled aggregate records.
+  const committed = new Map<string, { type: string; data: unknown }>();
+  for (const event of events) {
+    const record = event.data as { id: string };
+    const key = `${event.type}:${record.id}`;
+    committed.delete(key);
+    committed.set(key, event);
+  }
+  for (const event of committed.values()) emitter?.(event);
+  return result;
+}
+
+function ingestValidatedPayload(
+  payload: OtlpExportRequest,
+  store: Store,
+  emitter: (event: { type: string; data: unknown }) => void,
+): IngestResult {
   const result: IngestResult = {
     sessionsUpserted: 0,
     turnsUpserted: 0,
@@ -246,9 +476,9 @@ export async function ingestOtlpPayload(
         orphanSessionId !== root.span.id;
 
       if (isOrphan) {
-        await processOrphanBatch(root, orphanSessionId!, harness, store, result, emitter);
+        processOrphanBatch(root, orphanSessionId!, harness, store, result, emitter);
       } else {
-        await processSessionRoot(root, harness, store, result, emitter);
+        processSessionRoot(root, harness, store, result, emitter);
       }
     }
   }
@@ -258,13 +488,13 @@ export async function ingestOtlpPayload(
 
 // ── Session-level processing ──────────────────────────────────────────────────
 
-async function processSessionRoot(
+function processSessionRoot(
   root: SpanTree,
   harness: HarnessKind,
   store: Store,
   result: IngestResult,
   emitter?: (event: { type: string; data: unknown }) => void
-): Promise<void> {
+): void {
   const span = root.span;
   const attrs = span.attrs;
 
@@ -351,12 +581,12 @@ async function processSessionRoot(
   for (const child of root.children) {
     const k = child.span.kind;
     if (k === "chain" || k === "turn") {
-      await processTurn(child, sessionId, turnIdx++, store, result, emitter);
+      processTurn(child, sessionId, turnIdx++, store, result, emitter);
     } else if (k === "llm") {
       // LLM direct child of session — attach without a turn wrapper
-      await processLlmCall(child, sessionId, sessionId, store, result, emitter);
+      processLlmCall(child, sessionId, sessionId, store, result, emitter);
     } else if (k === "tool") {
-      await processToolCall(child.span, sessionId, sessionId, store, result, emitter);
+      processToolCall(child.span, sessionId, sessionId, store, result, emitter);
     }
   }
 
@@ -370,14 +600,14 @@ async function processSessionRoot(
 // separate HTTP request from their parent session span. We route them to the
 // existing session via session.id rather than creating a ghost session.
 
-async function processOrphanBatch(
+function processOrphanBatch(
   root: SpanTree,
   sessionId: string,
   harness: HarnessKind,
   store: Store,
   result: IngestResult,
   emitter?: (event: { type: string; data: unknown }) => void
-): Promise<void> {
+): void {
   const kind = root.span.kind;
 
   // Ensure the session exists in the store (may already be there from an
@@ -410,7 +640,7 @@ async function processOrphanBatch(
   // Route by span kind: turn → processTurn, LLM/tool → processLlmCall/processToolCall
   if (kind === "chain" || kind === "turn") {
     const idx = store.getTurn(root.span.id)?.idx ?? store.listTurns(sessionId).length;
-    await processTurn(root, sessionId, idx, store, result, emitter);
+    processTurn(root, sessionId, idx, store, result, emitter);
   } else {
     // Preserve the actual parent ID when children flush before their turn.
     // Inventing a turn ID here permanently strands those calls: the parent
@@ -418,10 +648,15 @@ async function processOrphanBatch(
     const syntheticTurnId = root.span.parentId ?? root.span.id;
     for (const child of [root, ...root.children]) {
       if (child.span.kind === "llm") {
-        await processLlmCall(child, syntheticTurnId, sessionId, store, result, emitter);
+        processLlmCall(child, syntheticTurnId, sessionId, store, result, emitter);
       } else if (child.span.kind === "tool") {
-        await processToolCall(child.span, syntheticTurnId, sessionId, store, result, emitter);
+        processToolCall(child.span, syntheticTurnId, sessionId, store, result, emitter);
       }
+    }
+    // A child may arrive after its turn was already persisted. Refresh from
+    // the upserted records so retries/duplicate batches never double-count.
+    if (store.getTurn(syntheticTurnId)) {
+      recomputeTurnTotals(syntheticTurnId, sessionId, store, emitter);
     }
   }
 
@@ -458,14 +693,14 @@ function recomputeSessionTotals(
   store.setCapture(sessionId, { ...capture, unknownMetrics: [...new Set(llmCalls.flatMap(c => (store.getCapture(c.id)?.unknownMetrics ?? []) as string[]))].filter(k => k !== "latencyMs").map(k => k === "cost" ? "costTotal" : k) });
   emitter?.({ type: "session", data: updated });
 }
-async function processTurn(
+function processTurn(
   node: SpanTree,
   sessionId: string,
   idx: number,
   store: Store,
   result: IngestResult,
   emitter?: (event: { type: string; data: unknown }) => void
-): Promise<void> {
+): void {
   const span = node.span;
   const attrs = span.attrs;
   const turnId = span.id;
@@ -489,12 +724,9 @@ async function processTurn(
     cost += num(llm.attrs, "llm.cost.total");
   }
 
-  // Determine end_signal heuristic
-  let endSignal: TurnRecord["endSignal"] = "completed";
-  if (str(attrs, "status") === "ERROR") endSignal = "error";
-  else if (str(attrs, "end_signal")) {
-    endSignal = str(attrs, "end_signal") as TurnRecord["endSignal"];
-  }
+  const previousTurn = store.getTurn(turnId);
+  const previousCapture = store.getCapture(turnId);
+  const resolvedStatus = resolveStatus(node.span, previousCapture, previousTurn?.status, previousTurn?.endSignal);
 
   const turn: TurnRecord = {
     id: turnId,
@@ -511,23 +743,25 @@ async function processTurn(
     cacheReadTokens: cacheRead,
     cacheWriteTokens: cacheWrite,
     cost,
-    status: str(attrs, "status"),
-    endSignal,
+    status: resolvedStatus.status,
+    endSignal: resolvedStatus.endSignal,
   };
 
   store.upsertTurn(turn);
+  setCaptureWithCoverage(store, turnId,
+    (previousCapture?.unknownMetrics ?? []) as string[], resolvedStatus.capture);
   result.turnsUpserted++;
   emitter?.({ type: "turn", data: turn });
 
   // Process LLM calls
   for (const llmNode of llmChildren) {
-    await processLlmCall(llmNode, turnId, sessionId, store, result, emitter);
+    processLlmCall(llmNode, turnId, sessionId, store, result, emitter);
   }
   // Also process nested LLM calls (turn may contain another CHAIN layer)
   for (const child of node.children) {
     if (child.span.kind === "chain") {
       for (const llmNode of child.children.filter((c) => c.span.kind === "llm")) {
-        await processLlmCall(llmNode, turnId, sessionId, store, result, emitter);
+        processLlmCall(llmNode, turnId, sessionId, store, result, emitter);
       }
     }
   }
@@ -535,7 +769,7 @@ async function processTurn(
   // Process tool calls
   const allToolDescendants = collectAllSpans(node).filter((s) => s.kind === "tool");
   for (const toolSpan of allToolDescendants) {
-    await processToolCall(toolSpan, turnId, sessionId, store, result, emitter);
+    processToolCall(toolSpan, turnId, sessionId, store, result, emitter);
   }
 
   // Re-aggregate turn totals from what's actually in the store now.
@@ -563,20 +797,24 @@ function recomputeTurnTotals(
     cost: llmCalls.reduce((s, c) => s + c.cost, 0),
   };
   store.upsertTurn(updated);
-  store.setCapture(turnId, { ...(store.getCapture(turnId) ?? { source: "live", partial: false }), unknownMetrics: [...new Set(llmCalls.flatMap(c => (store.getCapture(c.id)?.unknownMetrics ?? []) as string[]))].filter(k => k !== "latencyMs") });
+  setCaptureWithCoverage(
+    store,
+    turnId,
+    [...new Set(llmCalls.flatMap(c => (store.getCapture(c.id)?.unknownMetrics ?? []) as string[]))].filter(k => k !== "latencyMs"),
+  );
   emitter?.({ type: "turn", data: updated });
 }
 
 // ── LLM call processing ───────────────────────────────────────────────────────
 
-async function processLlmCall(
+function processLlmCall(
   node: SpanTree,
   turnId: string,
   sessionId: string,
   store: Store,
   result: IngestResult,
   emitter?: (event: { type: string; data: unknown }) => void
-): Promise<void> {
+): void {
   const span = node.span;
   const attrs = span.attrs;
 
@@ -588,11 +826,11 @@ async function processLlmCall(
   let outputRef: string | undefined;
 
   if (inputMessages) {
-    inputRef = await sha256hex(inputMessages);
+    inputRef = sha256hex(inputMessages);
     store.putBlob(inputRef, "application/json", inputMessages);
   }
   if (outputMessages) {
-    outputRef = await sha256hex(outputMessages);
+    outputRef = sha256hex(outputMessages);
     store.putBlob(outputRef, "application/json", outputMessages);
   }
 
@@ -627,6 +865,7 @@ async function processLlmCall(
   if (!span.endedAt) missing.push("latencyMs");
   const previousCapture = store.getCapture(llmCall.id);
   const previousCall = store.listLlmCallsBySession(sessionId).find(c => c.id === llmCall.id);
+  const resolvedStatus = resolveStatus(span, previousCapture);
   const previousMissing = (previousCapture?.unknownMetrics ?? []) as string[];
   const unknownMetrics = missing.filter(key => !previousCall || previousMissing.includes(key));
   if (previousCall) {
@@ -637,7 +876,7 @@ async function processLlmCall(
     llmCall.inputMessagesRef ??= previousCall.inputMessagesRef;
   }
   store.upsertLlmCall(llmCall);
-  store.setCapture(llmCall.id, { source: "live", partial: false, unknownMetrics });
+  setCaptureWithCoverage(store, llmCall.id, unknownMetrics, resolvedStatus.capture);
   result.llmCallsUpserted++;
   emitter?.({ type: "llm_call", data: llmCall });
 
@@ -684,7 +923,7 @@ async function processLlmCall(
           typeof systemMsg.message.content === "string"
             ? systemMsg.message.content
             : JSON.stringify(systemMsg.message.content);
-        const hash = await sha256hex(text);
+        const hash = sha256hex(text);
         const seg: PromptSegmentRecord = {
           llmCallId: span.id,
           ord: 0,
@@ -714,7 +953,7 @@ async function processLlmCall(
       }>;
       for (const def of defs) {
         const schemaStr = JSON.stringify(def.schema ?? {});
-        const hash = await sha256hex(schemaStr);
+        const hash = sha256hex(schemaStr);
         const toolDef: ToolDefRecord = {
           sessionId,
           name: def.name,
@@ -733,15 +972,17 @@ async function processLlmCall(
 
 // ── Tool call processing ──────────────────────────────────────────────────────
 
-async function processToolCall(
+function processToolCall(
   span: NormalizedSpan,
   turnId: string,
   sessionId: string,
   store: Store,
   result: IngestResult,
   emitter?: (event: { type: string; data: unknown }) => void
-): Promise<void> {
+): void {
   const attrs = span.attrs;
+  const previousCapture = store.getCapture(span.id);
+  const previousTool = store.listToolCallsBySession(sessionId).find((call) => call.id === span.id);
   const tags = (attrs["tag.tags"] as string[] | undefined) ?? [];
 
   // Infer tool kind from tags
@@ -768,32 +1009,40 @@ async function processToolCall(
   let argsRef: string | undefined;
   let outputRef: string | undefined;
 
-  if (argsRaw) {
-    argsRef = await sha256hex(argsRaw);
+  if (argsRaw !== undefined) {
+    argsRef = sha256hex(argsRaw);
     store.putBlob(argsRef, "application/json", argsRaw);
   }
-  if (outputRaw) {
-    outputRef = await sha256hex(outputRaw);
+  if (outputRaw !== undefined) {
+    outputRef = sha256hex(outputRaw);
     store.putBlob(outputRef, "text/plain", outputRaw);
   }
 
+  const resolvedStatus = resolveStatus(span, previousCapture, previousTool?.status);
+  const previousUnknown = (previousCapture?.unknownMetrics ?? []) as string[];
+  const hasKnownLatency = previousTool !== undefined && !previousUnknown.includes("latencyMs");
+  const hasKnownOutputEstimate = previousTool !== undefined && !previousUnknown.includes("tokensOutEst");
+  const unknownMetrics = previousUnknown.filter(key => key !== "latencyMs" && key !== "tokensOutEst");
+  if (!span.endedAt && !hasKnownLatency) unknownMetrics.push("latencyMs");
+  if (outputRaw === undefined && !hasKnownOutputEstimate) unknownMetrics.push("tokensOutEst");
+  const hasClassification = attrs["tag.tags"] !== undefined;
   const toolCall: ToolCallRecord = {
     id: span.id,
     turnId,
     sessionId,
-    name: str(attrs, "tool.name") ?? span.name,
-    kind,
-    server,
-    skill,
-    argsRef,
-    outputRef,
-    latencyMs: span.latencyMs,
-    tokensOutEst: outputRaw ? estimateTokens(outputRaw) : 0,
-    status: str(attrs, "status"),
+    name: str(attrs, "tool.name") ?? previousTool?.name ?? span.name,
+    kind: hasClassification ? kind : previousTool?.kind ?? kind,
+    server: hasClassification ? server : previousTool?.server,
+    skill: hasClassification ? skill : previousTool?.skill,
+    argsRef: argsRef ?? previousTool?.argsRef,
+    outputRef: outputRef ?? previousTool?.outputRef,
+    latencyMs: !span.endedAt && hasKnownLatency ? previousTool.latencyMs : span.latencyMs,
+    tokensOutEst: outputRaw !== undefined ? estimateTokens(outputRaw) : previousTool?.tokensOutEst ?? 0,
+    status: resolvedStatus.status,
   };
 
   store.upsertToolCall(toolCall);
-  store.setCapture(toolCall.id, { source: "live", partial: false, unknownMetrics: span.endedAt ? [] : ["latencyMs"] });
+  setCaptureWithCoverage(store, toolCall.id, unknownMetrics, resolvedStatus.capture);
   result.toolCallsUpserted++;
   emitter?.({ type: "tool_call", data: toolCall });
 }

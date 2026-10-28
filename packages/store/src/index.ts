@@ -34,6 +34,9 @@ function rowToSession(row: Record<string, unknown>): SessionRecord {
     cacheWriteTokens: Number(row.cache_write_tokens),
     costTotal: Number(row.cost_total),
     endReason: row.end_reason != null ? String(row.end_reason) : undefined,
+    toolErrorCount: row.tool_error_count != null ? Number(row.tool_error_count) : undefined,
+    modelErrorCount: row.model_error_count != null ? Number(row.model_error_count) : undefined,
+    turnErrorCount: row.turn_error_count != null ? Number(row.turn_error_count) : undefined,
   };
 }
 
@@ -197,6 +200,7 @@ export class Store {
         status text
       );
       create index if not exists tool_calls_turn_idx on tool_calls(turn_id);
+      create index if not exists tool_calls_session_idx on tool_calls(session_id);
 
       create table if not exists prompt_segments (
         llm_call_id text not null references llm_calls(id),
@@ -355,7 +359,12 @@ export class Store {
 
   listSessions(limit = 50): SessionRecord[] {
     const rows = this.db
-      .query(`select * from sessions order by started_at desc limit $limit`)
+      .query(`select s.*,
+        (select count(*) from tool_calls t where t.session_id=s.id and t.status='ERROR') as tool_error_count,
+        (select count(*) from llm_calls l left join record_capture c on c.id=l.id
+          where l.session_id=s.id and (l.finish_reason='error' or json_extract(c.capture_json, '$.statusCode')='STATUS_CODE_ERROR')) as model_error_count,
+        (select count(*) from turns t where t.session_id=s.id and t.end_signal='error') as turn_error_count
+        from sessions s order by started_at desc limit $limit`)
       .all({ $limit: limit }) as Array<Record<string, unknown>>;
     return rows.map(rowToSession);
   }
@@ -641,6 +650,32 @@ export class Store {
   }
 
   // ── Insights ──────────────────────────────────────────────────────────────
+
+  listSessionInsights(sessionId: string): Insight[] {
+    const rows = this.db.query(`select * from insights where
+      (scope_type='session' and scope_id=?) or
+      (scope_type='turn' and scope_id in (select id from turns where session_id=?))
+      order by created_at desc, id asc`).all(sessionId, sessionId) as Array<Record<string, unknown>>;
+    return rows.map(row => ({
+      id: String(row.id), scopeType: row.scope_type as Insight["scopeType"], scopeId: String(row.scope_id),
+      kind: String(row.kind), severity: row.severity as Insight["severity"], title: String(row.title),
+      summary: String(row.summary), evidence: JSON.parse(String(row.evidence_json)), createdAt: String(row.created_at),
+    }));
+  }
+
+  /** Current findings, not an append-only event log. Keep first-seen times stable. */
+  replaceSessionInsights(sessionId: string, insights: Insight[]): Insight[] {
+    if (new Set(insights.map(i => i.id)).size !== insights.length) throw new Error("Duplicate finding identity in one analysis");
+    return this.db.transaction(() => {
+      const previous = new Map(this.listSessionInsights(sessionId).map(i => [i.id, i]));
+      const current = insights.map(i => ({ ...i, createdAt: previous.get(i.id)?.createdAt ?? i.createdAt }));
+      this.db.query(`delete from insights where
+        (scope_type='session' and scope_id=?) or
+        (scope_type='turn' and scope_id in (select id from turns where session_id=?))`).run(sessionId, sessionId);
+      for (const insight of current) this.upsertInsight(insight);
+      return this.listSessionInsights(sessionId);
+    })();
+  }
 
   upsertInsight(insight: Insight): void {
     this.db.query(`

@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-28T00:00:00.000Z",
+  "title": "Design System: Agent Profiler",
+  "extensions": {
+    "colorMeta": {
+      "primary": { "role": "primary", "displayName": "Muted violet", "tonalRamp": ["oklch(15% 0.04 290)", "oklch(26% 0.04 290)", "oklch(38% 0.04 290)", "oklch(49% 0.04 290)", "oklch(61% 0.04 290)", "oklch(72% 0.04 290)", "oklch(84% 0.04 290)", "oklch(95% 0.04 290)"] },
+      "background": { "role": "neutral", "displayName": "Graphite workspace", "tonalRamp": ["#141417", "#19191c", "#1e1e22", "#242428", "#28282e", "#303038", "#34343b", "#41414a"] },
+      "foreground": { "role": "neutral", "displayName": "Reading text", "tonalRamp": ["#19191c", "#242428", "#34343b", "#41414a", "#a0a0ab", "#b4b4bf", "#eeeeef", "#f3f3f5"] },
+      "card": { "role": "neutral", "displayName": "Working surface", "tonalRamp": ["#141417", "#19191c", "#1e1e22", "#242428", "#28282e", "#303038", "#34343b", "#41414a"] },
+      "popover": { "role": "neutral", "displayName": "Raised surface / muted fill", "tonalRamp": ["#141417", "#19191c", "#1e1e22", "#242428", "#28282e", "#303038", "#34343b", "#41414a"] },
+      "primary-foreground": { "role": "neutral", "displayName": "Solid accent foreground", "tonalRamp": ["#19191c", "#242428", "#34343b", "#41414a", "#a0a0ab", "#b4b4bf", "#eeeeef", "#f3f3f5"] },
+      "secondary": { "role": "neutral", "displayName": "Secondary surface", "tonalRamp": ["#141417", "#19191c", "#1e1e22", "#242428", "#28282e", "#303038", "#34343b", "#41414a"] },
+      "secondary-foreground": { "role": "neutral", "displayName": "Supporting text", "tonalRamp": ["#19191c", "#242428", "#34343b", "#41414a", "#a0a0ab", "#b4b4bf", "#eeeeef", "#f3f3f5"] },
+      "muted-foreground": { "role": "neutral", "displayName": "Metadata text", "tonalRamp": ["#19191c", "#242428", "#34343b", "#41414a", "#a0a0ab", "#b4b4bf", "#eeeeef", "#f3f3f5"] },
+      "accent": { "role": "neutral", "displayName": "Interactive hover", "tonalRamp": ["#141417", "#19191c", "#1e1e22", "#242428", "#28282e", "#303038", "#34343b", "#41414a"] },
+      "accent-foreground": { "role": "neutral", "displayName": "Interactive hover text", "tonalRamp": ["#19191c", "#242428", "#34343b", "#41414a", "#a0a0ab", "#b4b4bf", "#eeeeef", "#f3f3f5"] },
+      "destructive": { "displayName": "Destructive action", "tonalRamp": ["oklch(15% 0.05 20)", "oklch(26% 0.05 20)", "oklch(38% 0.05 20)", "oklch(49% 0.05 20)", "oklch(61% 0.05 20)", "oklch(72% 0.05 20)", "oklch(84% 0.05 20)", "oklch(95% 0.05 20)"] },
+      "destructive-foreground": { "role": "neutral", "displayName": "Destructive action text", "tonalRamp": ["#19191c", "#242428", "#34343b", "#41414a", "#a0a0ab", "#b4b4bf", "#eeeeef", "#f3f3f5"] },
+      "border": { "role": "neutral", "displayName": "Subtle separator", "tonalRamp": ["#141417", "#19191c", "#1e1e22", "#242428", "#28282e", "#303038", "#34343b", "#41414a"] },
+      "input": { "role": "neutral", "displayName": "Control stroke", "tonalRamp": ["#141417", "#19191c", "#1e1e22", "#242428", "#28282e", "#303038", "#34343b", "#41414a"] },
+      "green": { "displayName": "Recorded status green", "tonalRamp": ["oklch(15% 0.04 160)", "oklch(26% 0.04 160)", "oklch(38% 0.04 160)", "oklch(49% 0.04 160)", "oklch(61% 0.04 160)", "oklch(72% 0.04 160)", "oklch(84% 0.04 160)", "oklch(95% 0.04 160)"] },
+      "amber": { "displayName": "Recorded issue amber", "tonalRamp": ["oklch(15% 0.04 80)", "oklch(26% 0.04 80)", "oklch(38% 0.04 80)", "oklch(49% 0.04 80)", "oklch(61% 0.04 80)", "oklch(72% 0.04 80)", "oklch(84% 0.04 80)", "oklch(95% 0.04 80)"] },
+      "red": { "displayName": "Critical evidence red", "tonalRamp": ["oklch(15% 0.04 15)", "oklch(26% 0.04 15)", "oklch(38% 0.04 15)", "oklch(49% 0.04 15)", "oklch(61% 0.04 15)", "oklch(72% 0.04 15)", "oklch(84% 0.04 15)", "oklch(95% 0.04 15)"] },
+      "rail": { "role": "neutral", "displayName": "Navigation graphite", "tonalRamp": ["#141417", "#19191c", "#1e1e22", "#242428", "#28282e", "#303038", "#34343b", "#41414a"] },
+      "animal-lavender-deep": { "displayName": "Animal glyph — deep lavender" },
+      "animal-lavender-low": { "displayName": "Animal glyph — low lavender" },
+      "animal-lavender-mid": { "displayName": "Animal glyph — middle lavender" },
+      "animal-lavender-high": { "displayName": "Animal glyph — high lavender" },
+      "animal-lavender-light": { "displayName": "Animal glyph — light lavender" }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Page headline", "purpose": "System UI page titles; 21px on mobile, not a display face." },
+      "title": { "displayName": "Quiet state title", "purpose": "Empty and idle state headings." },
+      "body": { "displayName": "Workbench body", "purpose": "Descriptions, table evidence and property content." },
+      "label": { "displayName": "Control label", "purpose": "Buttons, table headers, captions and property labels." },
+      "micro": { "displayName": "Supporting metadata", "purpose": "Keycaps, timestamps and secondary notes, not body evidence." },
+      "source": { "displayName": "Recorded source", "purpose": "Raw payloads and code; monospace is not the interface voice." }
+    },
+    "shadows": [
+      { "name": "modal", "value": "0 25px 50px -12px rgb(0 0 0 / 0.25)", "purpose": "Tailwind shadow-2xl on modal dialogs; black 60% scrim carries separation." },
+      { "name": "background-settings", "value": "0 12px 30px rgb(0 0 0 / .3)", "purpose": "Header scene-control popover, not resting evidence containers." }
+    ],
+    "motion": [
+      { "name": "control-transition", "value": "150ms cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Tailwind transition-colors for controls and rows." },
+      { "name": "live-pulse", "value": "pulse-dot 1.5s infinite", "purpose": "Existing CSS live-dot helper, not proof of successful execution." },
+      { "name": "animal-budget", "value": "67ms timer plus requestAnimationFrame; at most 15fps", "purpose": "Persistent app-wide scene; pause and hidden tabs stop motion scheduling. DPR ≤1.5; scene and mask each near 2M backing pixels, plus four 640×480 textures; two animals below 768px, four otherwise." },
+      { "name": "reading-mask", "value": "60% destination-out; 20px blur; 12px expansion; 25% core pass; 100ms invalidation delay", "purpose": "Cached protection reduces glyph strength around measured reading regions; scroll, main resize and main DOM changes invalidate it. Paused scenes can repaint without advancing time." },
+      { "name": "reduced-motion", "value": "0.01ms; animation-iteration-count: 1", "purpose": "Global CSS override; animal background independently keeps a still scene, stops motion scheduling and disables Play/Pause." }
+    ],
+    "breakpoints": [
+      { "name": "filter-inline", "value": "640px" },
+      { "name": "mobile-max", "value": "767px" },
+      { "name": "properties-stack-max", "value": "1150px" },
+      { "name": "wide-workspace", "value": "1600px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Outline Button", "kind": "button", "refersTo": "button-outline",
+      "description": "Default workbench action; card fill and stronger control stroke.",
+      "html": "<button class=\"ds-outline\">Retry read</button>",
+      "css": ".ds-outline{display:inline-flex;align-items:center;justify-content:center;height:32px;padding:4px 12px;border:1px solid var(--color-input);border-radius:6px;background:var(--color-card);color:var(--color-foreground);font:500 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:pointer;transition:background-color 150ms}.ds-outline:hover{background:var(--color-accent);color:var(--color-accent-foreground)}.ds-outline:focus-visible{outline:2px solid var(--color-ring);outline-offset:3px}.ds-outline:disabled{opacity:.5;pointer-events:none}"
+    },
+    {
+      "name": "Primary Button", "kind": "button", "refersTo": "button-primary",
+      "description": "Restrained violet action, not a solid marketing CTA.",
+      "html": "<button class=\"ds-primary\">Open recorded context</button>",
+      "css": ".ds-primary{height:32px;padding:4px 12px;border:1px solid color-mix(in oklab,var(--color-primary) 30%,transparent);border-radius:6px;background:color-mix(in oklab,var(--color-primary) 15%,transparent);color:var(--color-primary);font:500 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:pointer;transition:background-color 150ms}.ds-primary:hover{background:color-mix(in oklab,var(--color-primary) 25%,transparent)}.ds-primary:focus-visible{outline:2px solid var(--color-ring);outline-offset:3px}.ds-primary:disabled{opacity:.5;pointer-events:none}"
+    },
+    {
+      "name": "Ghost Button", "kind": "button", "refersTo": "button-ghost",
+      "description": "Low-emphasis workspace action with no resting box.",
+      "html": "<button class=\"ds-ghost\">Refresh</button>",
+      "css": ".ds-ghost{height:32px;padding:4px 12px;border:0;border-radius:6px;background:transparent;color:var(--color-foreground);font:500 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:pointer;transition:background-color 150ms}.ds-ghost:hover{background:var(--color-accent);color:var(--color-accent-foreground)}.ds-ghost:focus-visible{outline:2px solid var(--color-ring);outline-offset:3px}.ds-ghost:disabled{opacity:.5;pointer-events:none}"
+    },
+    {
+      "name": "Session Filter", "kind": "input", "refersTo": "input",
+      "description": "Compact filter for loaded sessions, not a remote full-history search.",
+      "html": "<input class=\"ds-input\" aria-label=\"Filter loaded sessions\" placeholder=\"Filter sessions…\" />",
+      "css": ".ds-input{height:32px;max-width:100%;padding:4px 12px;border:1px solid var(--color-input);border-radius:6px;background:var(--color-card);color:var(--color-foreground);caret-color:var(--color-primary);font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;transition:border-color 150ms}.ds-input::placeholder{color:var(--color-muted-foreground)}.ds-input:focus-visible{outline:2px solid var(--color-ring);outline-offset:3px}.ds-input:disabled{opacity:.5;cursor:not-allowed}"
+    },
+    {
+      "name": "Rail Navigation", "kind": "nav", "refersTo": "navigation",
+      "description": "Compact persistent navigation with selected wash and keyboard hint.",
+      "html": "<nav aria-label=\"Workspace\"><button class=\"ds-nav\" aria-current=\"page\">Session review <kbd class=\"ds-key\">G S</kbd></button></nav>",
+      "css": ".ds-nav{display:flex;align-items:center;gap:9px;width:224px;max-width:100%;min-height:34px;padding:7px 9px;border:0;border-radius:5px;background:transparent;color:var(--color-secondary-foreground);text-align:left;font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:pointer}.ds-nav:hover{background:var(--color-muted);color:var(--color-foreground)}.ds-nav[aria-current=page]{background:#2c2937;color:#e2ddfb}.ds-nav:focus-visible{outline:2px solid var(--color-ring);outline-offset:3px}.ds-key{margin-left:auto;min-width:19px;padding:0 4px;border:1px solid var(--color-border);border-radius:4px;color:var(--color-muted-foreground);font:11px/18px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}"
+    },
+    {
+      "name": "Neutral Badge", "kind": "chip", "refersTo": "chip",
+      "description": "Noninteractive contextual label; semantic variants retain explicit words.",
+      "html": "<span class=\"ds-chip\">Partial capture</span>",
+      "css": ".ds-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px;background:var(--color-secondary);color:var(--color-secondary-foreground);font:500 11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;user-select:none}"
+    },
+    {
+      "name": "Evidence Container", "kind": "card", "refersTo": "card",
+      "description": "Flat bordered container for supporting recorded detail, not a floating KPI.",
+      "html": "<section class=\"ds-card\"><h3 class=\"ds-card-title\">Recorded context</h3><p class=\"ds-card-copy\">Unknown is missing evidence, not zero.</p></section>",
+      "css": ".ds-card{padding:16px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-card);color:var(--color-card-foreground);font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.ds-card-title{margin:0;font-size:14px;font-weight:600;line-height:1;letter-spacing:-.025em}.ds-card-copy{margin:8px 0 0;font-size:12px;color:var(--color-muted-foreground)}"
+    },
+    {
+      "name": "Finding Disclosure", "kind": "custom", "refersTo": "finding",
+      "description": "Plain-language observation with inspectable evidence, no causal attribution.",
+      "html": "<article class=\"ds-finding\"><p class=\"ds-finding-title\">Recorded issue</p><details class=\"ds-evidence\"><summary>Inspect evidence</summary><dl><dt>Recorded value</dt><dd>Unknown</dd></dl></details></article>",
+      "css": ".ds-finding{padding:18px 0;border-bottom:1px solid var(--color-border);color:var(--color-foreground);font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.ds-finding-title{margin:0;font-size:14px;font-weight:500}.ds-evidence{margin-top:12px;font-size:12px}.ds-evidence[open]{padding:12px;border:1px solid var(--color-border);border-radius:6px;background:var(--color-card)}.ds-evidence summary{color:var(--color-primary);cursor:pointer}.ds-evidence summary:hover{text-decoration:underline}.ds-evidence summary:focus-visible{outline:2px solid var(--color-ring);outline-offset:3px}.ds-evidence dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:8px 0 0}.ds-evidence dt{color:var(--color-secondary-foreground)}.ds-evidence dd{margin:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Background Scene Settings", "kind": "custom", "refersTo": "background-settings",
+      "description": "Header nonmodal popover for the persistent original ASCII background; Ocean mix is default. Pause retains the still scene. Native select and button are panel samples, not a canvas simulation.",
+      "html": "<section class=\"ds-background\" role=\"group\" aria-label=\"Background scene\"><label class=\"ds-background-label\" for=\"ds-background-animal\">Animals</label><select class=\"ds-background-select\" id=\"ds-background-animal\"><option>Ocean mix</option><option>Sharks</option><option>Rays</option><option>Seahorses</option><option>Jellyfish</option></select><div class=\"ds-background-motion\"><span>Slow drift</span><button class=\"ds-background-pause\" aria-label=\"Pause animal background\">Pause</button></div><p class=\"ds-background-copy\">Present on every page. Motion stops in hidden tabs; reduced motion keeps a still scene.</p></section>",
+      "css": ".ds-background{width:270px;max-width:calc(100vw - 32px);padding:16px;border:1px solid var(--color-input);border-radius:8px;background:var(--color-popover);box-shadow:0 12px 30px rgb(0 0 0 / .3);color:var(--color-foreground);font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.ds-background-label{font-size:12px;font-weight:500}.ds-background-select{display:block;width:100%;margin-top:8px;padding:7px 9px;border:1px solid var(--color-input);border-radius:5px;background:var(--color-card);color:var(--color-foreground);font:inherit}.ds-background-motion{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;font-size:12px}.ds-background-pause{height:28px;padding:0 10px;border:1px solid var(--color-input);border-radius:6px;background:var(--color-card);color:var(--color-foreground);font:500 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:pointer;transition:background-color 150ms}.ds-background-pause:hover{background:var(--color-accent)}.ds-background-select:focus-visible,.ds-background-pause:focus-visible{outline:2px solid var(--color-ring);outline-offset:3px}.ds-background-pause:disabled{opacity:.5;pointer-events:none}.ds-background-copy{margin:12px 0 0;color:var(--color-muted-foreground);font-size:12px;line-height:1.625}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Graphite workbench",
+    "overview": "A restrained Operate interface for developers refining a personal agent environment through recorded evidence. The user selected Graphite, system UI typography and Linear-like keyboard primacy; Kombai Selects informs composition, not copied assets. This is an investigation workspace, not an executive dashboard.\n\nThe built interface separates persistent navigation, working evidence and optional activity. A persistent lavender ASCII animal background appears across all pages by default, with header scene controls and protected reading areas. All visuals are code-led: CSS, SVG icons, charts and an original local canvas renderer; no photographic assets or shipping rasters.",
+    "keyCharacteristics": ["Neutral graphite layers with muted violet selection.", "Compact, sentence-case system typography and aligned evidence rows.", "Keyboard-first controls with visible focus and explicit uncertainty.", "App-wide ASCII animals with pausable motion and protected reading areas."],
+    "rules": [
+      { "name": "The Evidence Color Rule", "body": "Use semantic color to distinguish recorded states, never to imply configuration causation or an invented health score.", "section": "colors" },
+      { "name": "The Operate Type Rule", "body": "Preserve system UI for operating the workbench; reserve text monospace for source/data, apart from decorative canvas glyphs, and never add decorative display typography.", "section": "typography" },
+      { "name": "The Flat Evidence Rule", "body": "Separate evidence with alignment, tone and rules; reserve elevation for dialogs and control popovers.", "section": "elevation" }
+    ],
+    "dos": ["**Do** preserve the Graphite shell, system UI typography and compact aligned evidence.", "**Do** keep uncertainty, stale reads and synthetic provenance visible in words.", "**Do** preserve keyboard paths, modal focus containment and visible focus.", "**Do** keep animals present across all pages, with header scene controls, pausable motion and reduced-motion stills."],
+    "donts": ["**Don't** add navy/neon dashboard styling, promotional counters or uppercase micro-labels.", "**Don't** infer instruction causation, success or agent health from trace counts or decoration.", "**Don't** restrict animals to a sidebar or empty state, let unmasked glyphs compete with reading areas, or substitute photography for code-led visuals.", "**Don't** treat a source-derived system record as a completed visual/accessibility review."]
+  }
+}

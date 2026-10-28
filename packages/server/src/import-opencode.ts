@@ -69,6 +69,7 @@ export function importOpenCodeExport(data: Export, store: Store): { sessionId: s
     let current: TurnRecord | undefined;
     let index = 0;
     const touched = new Set<string>();
+    const associationConflicts = new Set((store.getCapture(sessionId)?.associationConflicts ?? []) as string[]);
     const makeTurn = (id: string, created: number, text?: string): TurnRecord => ({ id: identity(sessionId, id), sessionId, idx: index++, userText: text,
       startedAt: iso(created), llmRoundTrips: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 });
     for (const message of data.messages) {
@@ -76,7 +77,7 @@ export function importOpenCodeExport(data: Export, store: Store): { sessionId: s
         current = makeTurn(message.id, message.time.created, message.text);
         const existing = store.getTurn(current.id);
         store.upsertTurn(existing ? { ...existing, idx: current.idx, userText: current.userText,
-          assistantText: store.getCapture(current.id)?.source === "opencode-import" ? undefined : existing.assistantText } : current);
+          assistantText: undefined } : current);
         touched.add(current.id);
         continue;
       }
@@ -95,19 +96,38 @@ export function importOpenCodeExport(data: Export, store: Store): { sessionId: s
       if (existing && store.getCapture(id)?.source === "live") {
         // Keep live prompt/output evidence, but fill metrics missing at capture.
         const missing = (store.getCapture(id)?.unknownMetrics ?? []) as string[];
-        const merged = { ...existing };
+        const merged = { ...existing, turnId: current.id,
+          model: existing.model === "unknown" ? call.model : existing.model,
+          provider: existing.provider ?? call.provider,
+          finishReason: existing.finishReason ?? call.finishReason,
+          outputRef: existing.outputRef ?? call.outputRef };
+        if (existing.turnId !== current.id) {
+          touched.add(existing.turnId);
+          if (store.getTurn(existing.turnId)) associationConflicts.add(existing.turnId);
+        }
         for (const key of missing) {
           if (!unknownMetrics.includes(key)) (merged as unknown as Record<string, unknown>)[key] = (call as unknown as Record<string, unknown>)[key];
         }
         store.upsertLlmCall(merged);
-        store.setCapture(id, { ...store.getCapture(id), backfilled: true, unknownMetrics: missing.filter(k => unknownMetrics.includes(k)) });
+        store.setCapture(id, { ...store.getCapture(id), backfilled: true, sourceMessageId: message.id,
+          parentResolution: existing.turnId !== current.id ? { from: existing.turnId, to: current.id, basis: "exact OpenCode message ID" } : store.getCapture(id)?.parentResolution,
+          unknownMetrics: missing.filter(k => unknownMetrics.includes(k)) });
       } else {
         store.upsertLlmCall(call);
         store.setCapture(id, { ...imported, sourceMessageId: message.id, unknownMetrics });
       }
       for (const tool of (message.content ?? []).filter(c => c.type === "tool")) {
         const toolId = identity(sessionId, tool.id);
-        if (existingTools.has(toolId) && store.getCapture(toolId)?.source !== "opencode-import") continue;
+        const existingTool = existingTools.get(toolId);
+        if (existingTool && store.getCapture(toolId)?.source !== "opencode-import") {
+          if (existingTool.turnId !== current.id) {
+            touched.add(existingTool.turnId);
+            if (store.getTurn(existingTool.turnId)) associationConflicts.add(existingTool.turnId);
+          }
+          store.upsertToolCall({ ...existingTool, turnId: current.id });
+          store.setCapture(toolId, { ...store.getCapture(toolId), backfilled: true, sourceToolId: tool.id });
+          continue;
+        }
         const state = tool.state;
         const output = state.content ? JSON.stringify(state.content) : state.error ? JSON.stringify(state.error) : undefined;
         store.upsertToolCall({ id: toolId, turnId: current.id, sessionId, name: tool.name, kind: "other",
@@ -123,14 +143,15 @@ export function importOpenCodeExport(data: Export, store: Store): { sessionId: s
     const sum = (calls: LlmCallRecord[], key: keyof LlmCallRecord) => calls.reduce((n, c) => n + Number(c[key] ?? 0), 0);
     for (const id of touched) {
       const calls = store.listLlmCalls(id);
-      const turn = store.getTurn(id)!;
+      const turn = store.getTurn(id);
+      if (!turn) continue;
       store.upsertTurn({ ...turn, llmRoundTrips: calls.length, promptTokens: sum(calls, "promptTokens"), completionTokens: sum(calls, "completionTokens"), reasoningTokens: sum(calls, "reasoningTokens"), cacheReadTokens: sum(calls, "cacheReadTokens"), cacheWriteTokens: sum(calls, "cacheWriteTokens"), cost: sum(calls, "cost") });
-      store.setCapture(id, { ...imported, unknownMetrics: [...new Set(calls.flatMap(c => (store.getCapture(c.id)?.unknownMetrics ?? []) as string[]))].filter(k => k !== "latencyMs") });
+      store.setCapture(id, { ...(store.getCapture(id)?.source === "live" ? { ...store.getCapture(id), backfilled: true } : imported), unknownMetrics: [...new Set(calls.flatMap(c => (store.getCapture(c.id)?.unknownMetrics ?? []) as string[]))].filter(k => k !== "latencyMs") });
     }
     const calls = store.listLlmCallsBySession(sessionId);
     store.upsertSession({ ...store.getSession(sessionId)!, turnCount: store.listTurns(sessionId).length, llmCallCount: calls.length, toolCallCount: store.listToolCallsBySession(sessionId).length,
       model: calls[0]?.model, promptTokens: sum(calls, "promptTokens"), completionTokens: sum(calls, "completionTokens"), reasoningTokens: sum(calls, "reasoningTokens"), cacheReadTokens: sum(calls, "cacheReadTokens"), cacheWriteTokens: sum(calls, "cacheWriteTokens"), costTotal: sum(calls, "cost") });
-    store.setCapture(sessionId, { ...imported, sourceRef, unknownMetrics: [...new Set(calls.flatMap(c => (store.getCapture(c.id)?.unknownMetrics ?? []) as string[]))].filter(k => k !== "latencyMs").map(k => k === "cost" ? "costTotal" : k) });
+    store.setCapture(sessionId, { ...store.getCapture(sessionId), ...imported, sourceRef, associationConflicts: [...associationConflicts], unknownMetrics: [...new Set(calls.flatMap(c => (store.getCapture(c.id)?.unknownMetrics ?? []) as string[]))].filter(k => k !== "latencyMs").map(k => k === "cost" ? "costTotal" : k) });
   });
   transaction();
   return { sessionId };

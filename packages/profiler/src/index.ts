@@ -17,8 +17,6 @@ import type { Store } from "@agent-profiler/store";
 
 // ── Insight factory ───────────────────────────────────────────────────────────
 
-let _insightSeq = 0;
-
 function makeInsight(
   scopeType: Insight["scopeType"],
   scopeId: string,
@@ -29,7 +27,7 @@ function makeInsight(
   evidence: Record<string, unknown>
 ): Insight {
   return {
-    id: `${kind}:${scopeId}:${++_insightSeq}`,
+    id: [kind, scopeType, scopeId, evidence.entityKey ?? evidence.llmCallId ?? evidence.turnId ?? (evidence.toolName ? `${evidence.toolKind ?? "unknown"}/${evidence.toolName}` : "summary")].map(value => encodeURIComponent(String(value))).join(":"),
     scopeType,
     scopeId,
     kind,
@@ -64,37 +62,6 @@ function percentile(sorted: number[], p: number): number {
   if (!sorted.length) return 0;
   const idx = Math.floor((p / 100) * (sorted.length - 1));
   return sorted[idx] ?? 0;
-}
-
-/** Simple bootstrap CI for mean difference between two arrays. */
-function bootstrapCI(
-  a: number[],
-  b: number[],
-  iterations = 1000,
-  alpha = 0.05
-): { meanA: number; meanB: number; delta: number; ciLow: number; ciHigh: number } {
-  const meanA = mean(a);
-  const meanB = mean(b);
-  const delta = meanB - meanA;
-
-  if (!a.length || !b.length) {
-    return { meanA, meanB, delta, ciLow: delta, ciHigh: delta };
-  }
-
-  const diffs: number[] = [];
-  for (let i = 0; i < iterations; i++) {
-    const sampleA = Array.from({ length: a.length }, () => a[Math.floor(Math.random() * a.length)]!);
-    const sampleB = Array.from({ length: b.length }, () => b[Math.floor(Math.random() * b.length)]!);
-    diffs.push(mean(sampleB) - mean(sampleA));
-  }
-  diffs.sort((x, y) => x - y);
-  return {
-    meanA,
-    meanB,
-    delta,
-    ciLow: percentile(diffs, alpha / 2 * 100),
-    ciHigh: percentile(diffs, (1 - alpha / 2) * 100),
-  };
 }
 
 // ── 1. Cache analyzer ─────────────────────────────────────────────────────────
@@ -164,10 +131,10 @@ export function analyzeCacheEfficiency(
         "session",
         session.id,
         "cache.low_hit_ratio",
-        hitRatio < 0.1 ? "critical" : "warn",
-        "Low prompt-cache hit ratio",
-        `Cache hit ratio is ${(hitRatio * 100).toFixed(1)}% (${totalCacheRead.toLocaleString()} / ${totalPrompt.toLocaleString()} tokens). Consider stabilizing the static prefix.`,
-        { hitRatio, totalCacheRead, totalPrompt }
+        "info",
+        "Low recorded cached-input share",
+        `${(hitRatio * 100).toFixed(1)}% of recorded input tokens came from cache (${totalCacheRead.toLocaleString()} / ${totalPrompt.toLocaleString()}) across ${llmCalls.length} calls. Below the 30% review threshold; this does not establish a cache malfunction.`,
+        { hitRatio, totalCacheRead, totalPrompt, llmCallCount: llmCalls.length, reviewThreshold: 0.3 }
       )
     );
   }
@@ -178,9 +145,9 @@ export function analyzeCacheEfficiency(
         "session",
         session.id,
         "cache.prefix_volatile",
-        "warn",
-        "Cache-busting prefix changes detected",
-        `The static prompt prefix changed in ${changedCount} of ${prefixHashes.length - 1} consecutive LLM calls (volatility ${(volatilityScore * 100).toFixed(0)}%). This breaks prefix caching.`,
+        "info",
+        "Captured static-prefix hashes changed",
+        `Captured static-prefix hashes changed in ${changedCount} of ${prefixHashes.length - 1} adjacent recorded calls (${(volatilityScore * 100).toFixed(0)}%). This alone does not establish a provider cache miss.`,
         { volatilityScore, changedCount, prefixChanges }
       )
     );
@@ -260,10 +227,10 @@ export function analyzeAttribution(
           "session",
           session.id,
           "attribution.tool_latency_high",
-          "warn",
-          `Tool '${tool.name}' accounts for >30% of session latency`,
-          `'${tool.name}' consumed ${tool.total_latency_ms.toLocaleString()}ms across ${tool.call_count} call(s) — ${(latencyFraction * 100).toFixed(0)}% of session duration.`,
-          { toolName: tool.name, latencyMs: tool.total_latency_ms, fraction: latencyFraction }
+          "info",
+          `Review accumulated '${tool.name}' durations`,
+          `Recorded call durations total ${tool.total_latency_ms.toLocaleString()}ms across ${tool.call_count} calls. Calls can overlap and the session interval can include idle time; this is not an elapsed-time attribution.`,
+          { toolName: tool.name, toolKind: tool.kind, latencyMs: tool.total_latency_ms, sessionIntervalMs: sessionDuration, callCount: tool.call_count, reviewThreshold: 0.3 }
         )
       );
     }
@@ -300,7 +267,7 @@ export interface CompositionResult {
   totalChars: number;
   totalTokenEst: number;
   toolDefsTokens: number;
-  toolDefsFraction: number;
+  toolDefsFraction: number | null;
   insights: Insight[];
 }
 
@@ -329,24 +296,11 @@ export function analyzeComposition(
   const totalChars = summaries.reduce((s, x) => s + x.totalChars, 0);
   const totalTokenEst = summaries.reduce((s, x) => s + x.totalTokenEst, 0);
   const toolDefsTokens = toolDefs.reduce((s, d) => s + d.schemaTokensEst, 0);
-  const toolDefsFraction = totalTokenEst > 0 ? toolDefsTokens / totalTokenEst : 0;
+  // Session inventory is not a per-request tool snapshot, and captured segments
+  // are not necessarily the full input. A percentage here would be fabricated.
+  const toolDefsFraction = null;
 
   const insights: Insight[] = [];
-
-  // Tool defs bloat: >25% of prompt tokens are tool schemas
-  if (toolDefsFraction > 0.25 && toolDefsTokens > 500) {
-    insights.push(
-      makeInsight(
-        "session",
-        sessionId,
-        "composition.tool_defs_bloat",
-        toolDefsFraction > 0.5 ? "critical" : "warn",
-        "Tool definitions consume a large share of the context window",
-        `Tool schema definitions are estimated at ${toolDefsTokens.toLocaleString()} tokens — ${(toolDefsFraction * 100).toFixed(0)}% of the prompt. Consider reducing tool descriptions or conditionally including tools.`,
-        { toolDefsTokens, totalTokenEst, toolDefsFraction }
-      )
-    );
-  }
 
   // Duplicate segments
   const dupes = summaries.filter((s) => s.isDuplicate);
@@ -356,10 +310,10 @@ export function analyzeComposition(
         "session",
         sessionId,
         "composition.duplicate_segments",
-        "warn",
-        "Duplicate prompt segments detected",
-        `${dupes.length} segment(s) appear more than once in the prompt (same content hash). This wastes context and may indicate configuration bugs.`,
-        { duplicates: dupes.map((d) => d.sourceName) }
+        "info",
+        "Repeated captured prompt segments",
+        `${dupes.length} captured segment(s) share a content hash. Inspect the request context before treating repetition as unnecessary work.`,
+        { llmCallId, duplicates: dupes.map((d) => d.sourceName) }
       )
     );
   }
@@ -393,6 +347,7 @@ function looksLikeCorrective(text: string): boolean {
   return patterns.some((p) => p.test(lower));
 }
 
+/** Experimental offline heuristic; never used to generate current product findings. */
 export function analyzeRightsizing(
   session: SessionRecord,
   store: Store,
@@ -479,10 +434,10 @@ export function analyzeRightsizing(
 export interface HarnessMetrics {
   harness: string;
   sessionCount: number;
-  meanCacheHitRatio: number;
+  meanCacheHitRatio: number | null;
   meanTokensPerTurn: number;
   meanCostPerTurn: number;
-  meanLatencyMsPerTurn: number;
+  meanLatencyMsPerTurn: number | null;
   meanTurnsPerSession: number;
 }
 
@@ -490,11 +445,13 @@ export interface CompareResult {
   metrics: HarnessMetrics[];
   pairwiseDeltas: Array<{
     from: string; to: string;
-    cacheHitRatioDelta: { delta: number; ciLow: number; ciHigh: number };
-    tokensPerTurnDelta: { delta: number; ciLow: number; ciHigh: number };
-    costPerTurnDelta: { delta: number; ciLow: number; ciHigh: number };
+    cacheHitRatioDelta: { delta: number | null; ciLow: number | null; ciHigh: number | null };
+    tokensPerTurnDelta: { delta: number; ciLow: number | null; ciHigh: number | null };
+    costPerTurnDelta: { delta: number; ciLow: number | null; ciHigh: number | null };
   }>;
   insights: Insight[];
+  comparisonBasis: string;
+  excludedSessionCount: number;
 }
 
 export function analyzeCompare(store: Store, harnessFilter?: string[]): CompareResult {
@@ -502,10 +459,18 @@ export function analyzeCompare(store: Store, harnessFilter?: string[]): CompareR
 
   // Group sessions by harness
   const byHarness = new Map<string, SessionRecord[]>();
+  const sessionTurns = new Map<string, TurnRecord[]>();
+  let excludedSessionCount = 0;
   for (const s of sessions) {
-    if (((store.getCapture(s.id)?.unknownMetrics ?? []) as string[]).length) continue;
-    if (store.listLlmCallsBySession(s.id).some(c => ((store.getCapture(c.id)?.unknownMetrics ?? []) as string[]).length)) continue;
     if (harnessFilter && !harnessFilter.includes(s.harness)) continue;
+    const turns = store.listTurns(s.id);
+    const turnIds = new Set(turns.map(t => t.id));
+    const calls = store.listLlmCallsBySession(s.id);
+    if (!turns.length || ((store.getCapture(s.id)?.associationConflicts ?? []) as string[]).length || ((store.getCapture(s.id)?.unknownMetrics ?? []) as string[]).length ||
+        calls.some(c => !turnIds.has(c.turnId) || ((store.getCapture(c.id)?.unknownMetrics ?? []) as string[]).length)) {
+      excludedSessionCount++; continue;
+    }
+    sessionTurns.set(s.id, turns);
     const existing = byHarness.get(s.harness) ?? [];
     existing.push(s);
     byHarness.set(s.harness, existing);
@@ -518,6 +483,8 @@ export function analyzeCompare(store: Store, harnessFilter?: string[]): CompareR
     costPerTurn: number[];
     latencyPerTurn: number[];
     turnsPerSession: number[];
+    cacheRead: number;
+    cacheInput: number;
   }>();
 
   for (const [harness, sessList] of byHarness) {
@@ -527,21 +494,25 @@ export function analyzeCompare(store: Store, harnessFilter?: string[]): CompareR
       costPerTurn: [] as number[],
       latencyPerTurn: [] as number[],
       turnsPerSession: [] as number[],
+      cacheRead: 0,
+      cacheInput: 0,
     };
     for (const sess of sessList) {
-      const turns = store.listTurns(sess.id);
+      const turns = sessionTurns.get(sess.id)!;
       if (!turns.length) continue;
       m.turnsPerSession.push(turns.length);
       for (const turn of turns) {
-        const total = turn.promptTokens + turn.completionTokens;
-        if (total > 0) {
+        const total = turn.promptTokens;
+        if (total > 0 && turn.cacheReadTokens >= 0 && turn.cacheReadTokens <= total) {
           m.cacheHitRatios.push(turn.cacheReadTokens / total);
+          m.cacheRead += turn.cacheReadTokens;
+          m.cacheInput += total;
         }
         m.tokensPerTurn.push(turn.promptTokens + turn.completionTokens);
         m.costPerTurn.push(turn.cost);
         const llmCalls = store.listLlmCalls(turn.id);
         const turnLatency = llmCalls.reduce((s, c) => s + c.latencyMs, 0);
-        m.latencyPerTurn.push(turnLatency);
+        if (llmCalls.length) m.latencyPerTurn.push(turnLatency);
       }
     }
     harnessMetricsMap.set(harness, m);
@@ -552,15 +523,16 @@ export function analyzeCompare(store: Store, harnessFilter?: string[]): CompareR
     metrics.push({
       harness,
       sessionCount: byHarness.get(harness)!.length,
-      meanCacheHitRatio: mean(m.cacheHitRatios),
+      meanCacheHitRatio: m.cacheInput > 0 ? m.cacheRead / m.cacheInput : null,
       meanTokensPerTurn: mean(m.tokensPerTurn),
       meanCostPerTurn: mean(m.costPerTurn),
-      meanLatencyMsPerTurn: mean(m.latencyPerTurn),
+      meanLatencyMsPerTurn: m.latencyPerTurn.length ? mean(m.latencyPerTurn) : null,
       meanTurnsPerSession: mean(m.turnsPerSession),
     });
   }
 
-  // Pairwise deltas with bootstrap CIs
+  // Descriptive, unmatched cohorts. Turn-level bootstrapping would imply
+  // independence that is not established, so no confidence interval is claimed.
   const harnessNames = Array.from(harnessMetricsMap.keys());
   const pairwiseDeltas: CompareResult["pairwiseDeltas"] = [];
   const insights: Insight[] = [];
@@ -572,38 +544,21 @@ export function analyzeCompare(store: Store, harnessFilter?: string[]): CompareR
       const fromM = harnessMetricsMap.get(fromH)!;
       const toM = harnessMetricsMap.get(toH)!;
 
-      const cacheCI = bootstrapCI(fromM.cacheHitRatios, toM.cacheHitRatios);
-      const tokensCI = bootstrapCI(fromM.tokensPerTurn, toM.tokensPerTurn);
-      const costCI = bootstrapCI(fromM.costPerTurn, toM.costPerTurn);
+      const fromCache = fromM.cacheInput > 0 ? fromM.cacheRead / fromM.cacheInput : null;
+      const toCache = toM.cacheInput > 0 ? toM.cacheRead / toM.cacheInput : null;
 
       pairwiseDeltas.push({
         from: fromH,
         to: toH,
-        cacheHitRatioDelta: { delta: cacheCI.delta, ciLow: cacheCI.ciLow, ciHigh: cacheCI.ciHigh },
-        tokensPerTurnDelta: { delta: tokensCI.delta, ciLow: tokensCI.ciLow, ciHigh: tokensCI.ciHigh },
-        costPerTurnDelta: { delta: costCI.delta, ciLow: costCI.ciLow, ciHigh: costCI.ciHigh },
+        cacheHitRatioDelta: { delta: fromCache == null || toCache == null ? null : toCache - fromCache, ciLow: null, ciHigh: null },
+        tokensPerTurnDelta: { delta: mean(toM.tokensPerTurn) - mean(fromM.tokensPerTurn), ciLow: null, ciHigh: null },
+        costPerTurnDelta: { delta: mean(toM.costPerTurn) - mean(fromM.costPerTurn), ciLow: null, ciHigh: null },
       });
 
-      // Surface significant cost differences
-      const costRelative = costCI.meanA > 0 ? costCI.delta / costCI.meanA : 0;
-      if (Math.abs(costRelative) > 0.2 && !costCI.ciLow.toString().includes("NaN")) {
-        const direction = costCI.delta > 0 ? "more expensive" : "cheaper";
-        insights.push(
-          makeInsight(
-            "harness",
-            `${fromH}:${toH}`,
-            "compare.cost_delta",
-            Math.abs(costRelative) > 0.5 ? "critical" : "warn",
-            `${toH} is ${direction} than ${fromH} per turn`,
-            `Δ = ${costCI.delta >= 0 ? "+" : ""}${(costRelative * 100).toFixed(1)}%, 95% CI [${(cacheCI.ciLow * 100).toFixed(1)}%, ${(cacheCI.ciHigh * 100).toFixed(1)}%]`,
-            { from: fromH, to: toH, delta: costCI.delta, ciLow: costCI.ciLow, ciHigh: costCI.ciHigh, relativeChange: costRelative }
-          )
-        );
-      }
     }
   }
 
-  return { metrics, pairwiseDeltas, insights };
+  return { metrics, pairwiseDeltas, insights, comparisonBasis: "Observed, unmatched workloads among the latest 1000 sessions. Recorded cost is not billed spend; no winner or confidence interval is inferred.", excludedSessionCount };
 }
 
 // ── Run all analyzers for a session and persist insights ──────────────────────
@@ -617,7 +572,6 @@ export async function runProfilers(
 
   const hasMissingMetrics = (id: string) => ((store.getCapture(id)?.unknownMetrics ?? []) as string[]).length > 0 ||
     store.listLlmCallsBySession(id).some(c => ((store.getCapture(c.id)?.unknownMetrics ?? []) as string[]).length > 0);
-  const allSessions = store.listSessions(500).filter(s => !hasMissingMetrics(s.id));
   const allInsights: Insight[] = [];
 
   // Cache
@@ -634,21 +588,59 @@ export async function runProfilers(
 
   // Composition: run for each LLM call in the session
   const llmCalls = store.listLlmCallsBySession(sessionId);
+  const sessionCapture = store.getCapture(sessionId);
+  if (hasMissingMetrics(sessionId) || sessionCapture?.partial === true) {
+    const incompleteCalls = llmCalls.filter(c => ((store.getCapture(c.id)?.unknownMetrics ?? []) as string[]).length > 0);
+    const sessionUnknownMetrics = (sessionCapture?.unknownMetrics ?? []) as string[];
+    const callUnknownMetrics = [...new Set(incompleteCalls.flatMap(c => (store.getCapture(c.id)?.unknownMetrics ?? []) as string[]))];
+    allInsights.push(makeInsight("session", sessionId, "coverage.incomplete", "info",
+      hasMissingMetrics(sessionId) ? "Some measurements are unavailable" : "Capture is partial",
+      incompleteCalls.length ? `${incompleteCalls.length} of ${llmCalls.length} model calls have missing measurements. Numeric recommendations are withheld; this is not a conclusion about run quality.`
+        : sessionUnknownMetrics.length ? `Session aggregates are unavailable for ${sessionUnknownMetrics.join(", ")}. Current evidence cannot establish a complete measurement.`
+        : "Recorded call metrics remain inspectable, but capture is partial: full request composition or completeness is not guaranteed. No missing data is reconstructed.",
+      { unknownCallCount: incompleteCalls.length, llmCallCount: llmCalls.length,
+        partialCapture: sessionCapture?.partial === true, sessionUnknownMetrics,
+        associationConflicts: sessionCapture?.associationConflicts ?? [],
+        unknownMetrics: [...new Set([...sessionUnknownMetrics, ...callUnknownMetrics])] }));
+  }
   for (const call of llmCalls) {
     const comp = analyzeComposition(call.id, sessionId, store);
     allInsights.push(...comp.insights);
   }
 
-  // Right-sizing
-  if (!hasMissingMetrics(sessionId)) {
-    const rs = analyzeRightsizing(session, store, allSessions);
-    allInsights.push(...rs.insights);
+  // Recorded execution outcomes are evidence. Errors, user stops, or many
+  // round trips do not establish that a model is over/under-powered.
+  const turns = new Map(store.listTurns(sessionId).map(t => [t.id, t]));
+  const toolCalls = store.listToolCallsBySession(sessionId);
+  const toolErrors = new Map<string, typeof toolCalls>();
+  const modelErrors = new Map<string, typeof llmCalls>();
+  for (const tool of toolCalls) if (tool.status === "ERROR") {
+    const group = toolErrors.get(tool.turnId) ?? []; group.push(tool); toolErrors.set(tool.turnId, group);
+  }
+  for (const call of llmCalls) if (call.finishReason === "error" || [2, "STATUS_CODE_ERROR"].includes(store.getCapture(call.id)?.statusCode as string | number)) {
+    const group = modelErrors.get(call.turnId) ?? []; group.push(call); modelErrors.set(call.turnId, group);
+  }
+  const parentIds = new Set([...turns.keys(), ...modelErrors.keys(), ...toolErrors.keys()]);
+  for (const parentId of parentIds) {
+    const turn = turns.get(parentId);
+    const scopeType = turn ? "turn" : "session";
+    const scopeId = turn?.id ?? sessionId;
+    const context = turn ? { sessionId, turnId: turn.id } : { sessionId, pendingTurnId: parentId, entityKey: `pending:${parentId}` };
+    const tools = toolErrors.get(parentId) ?? [];
+    const calls = modelErrors.get(parentId) ?? [];
+    if (tools.length) allInsights.push(makeInsight(scopeType, scopeId, "execution.tool_errors", "warn",
+      `${tools.length} recorded tool ${tools.length === 1 ? "error" : "errors"}`,
+      "These tool calls reported errors. Later calls may have recovered; inspect the captured evidence before changing the harness.",
+      { ...context, toolCallIds: tools.map(t => t.id), toolNames: [...new Set(tools.map(t => t.name))], errorCount: tools.length }));
+    if (calls.length) allInsights.push(makeInsight(scopeType, scopeId, "execution.model_errors", "warn",
+      `${calls.length} recorded model-call ${calls.length === 1 ? "error" : "errors"}`,
+      "The source recorded a model-call error status or finish reason. This is not a diagnosis of provider failure or model suitability.",
+      { ...context, llmCallIds: calls.map(c => c.id), errorCount: calls.length }));
+    if (turn?.endSignal === "error") allInsights.push(makeInsight("turn", turn.id, "execution.turn_error", "warn",
+      "Turn ended with a recorded error", "Inspect the turn's model and tool outcomes for the original evidence.", { sessionId, turnId: turn.id }));
+    else if (turn?.endSignal === "user_stopped") allInsights.push(makeInsight("turn", turn.id, "execution.user_stopped", "info",
+      "Turn was stopped by the user", "A deliberate stop is not evidence of an agent or model failure.", { sessionId, turnId: turn.id }));
   }
 
-  // Persist all insights
-  for (const insight of allInsights) {
-    store.upsertInsight(insight);
-  }
-
-  return allInsights;
+  return store.replaceSessionInsights(sessionId, allInsights);
 }

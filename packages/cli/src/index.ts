@@ -1,7 +1,7 @@
 /**
  * agent-profiler CLI — Node-compatible (no Bun APIs)
  *
- * Spawns the bundled server binary (bun build --compile output).
+ * Spawns the bundled server JavaScript with the locally installed Bun runtime.
  * Works with plain `npx` — Node is the only runtime requirement for the CLI itself.
  *
  * State dir: ~/.agent-profiler/
@@ -15,6 +15,7 @@ import { join, dirname } from "path";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
 import { importOpenCode } from "./import.js";
+import { parseDemoArgs, startDemo } from "./demo.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -218,6 +219,7 @@ Commands:
   status         Show whether the server is running
   logs [-f]      Print server logs (-f to follow/tail)
   open           Open the web UI in your browser
+  demo [--no-open]  Run an isolated synthetic demo, then remove its data on exit
   import opencode [--session ID] [--opencode-url URL] [--endpoint URL]
                  Import saved OpenCode V2 sessions (read-only source)
 
@@ -232,6 +234,18 @@ Environment:
 const [,, cmd, ...rest] = process.argv;
 
 switch (cmd) {
+  case "demo":
+    try {
+      const options = parseDemoArgs(rest);
+      const bunPath = requireBun();
+      if (!existsSync(SERVER_BUNDLE)) throw new Error(`Server bundle not found at ${SERVER_BUNDLE}`);
+      if (!existsSync(WEB_DIST)) throw new Error(`Web assets not found at ${WEB_DIST}`);
+      await startDemo(options, { bunPath, serverBundle: SERVER_BUNDLE, webDist: WEB_DIST });
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+    break;
   case "import":
     try {
       if (rest[0] !== "opencode") throw new Error("Usage: agent-profiler import opencode [--session ID] [--opencode-url URL] [--endpoint URL]");

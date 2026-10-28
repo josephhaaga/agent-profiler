@@ -2,8 +2,26 @@
 
 Local-first profiler for AI agent harnesses. Captures OpenInference OTLP traces
 from OpenCode (and other harnesses), stores them in SQLite, and serves a
-keyboard-driven web UI with statistical profiling — cache efficiency, token
-attribution, prompt composition, model right-sizing, and cross-harness comparison.
+keyboard-driven web UI with evidence-led findings, recorded-error triage,
+cache accounting, prompt inspection, and descriptive cross-harness comparison.
+
+**Local development preview:** the improvements below, including `demo`, are
+unpublished. The npm release does not yet include them. Run this checkout's
+build to try them without replacing an installed collector.
+
+### Try synthetic data without instrumentation
+
+```bash
+bun install
+bun run build
+bun packages/cli/dist/index.js demo
+```
+
+This opens a temporary loopback collector with ordinary, recorded-error, and
+missing-usage examples. No agent, account, model call, or API key is required.
+Your real database and daemon are unchanged. Press Ctrl+C to stop and delete
+the disposable demo database. Add `--no-open` to print the URL without opening
+a browser.
 
 ## Install
 
@@ -11,11 +29,15 @@ attribution, prompt composition, model right-sizing, and cross-harness compariso
 npx @josephhaaga/agent-profiler start
 ```
 
-That's it. No clone, no Bun, no dependencies — `npx` downloads and runs the
-package in one step.
+No clone or cloud account is required. `npx` downloads the CLI, collector,
+and dashboard. **The collector currently requires Bun on your PATH**; the CLI
+itself is Node-compatible. If Bun is missing, the command reports how to install
+it rather than silently downloading another runtime.
 
-The server starts as a background daemon on `http://localhost:7070` and persists
-across reboots via a PID file in `~/.agent-profiler/`.
+The server starts as a background daemon on `http://localhost:7070`. Its data
+persists in `~/.agent-profiler/`. A PID file does not restart a process after
+reboot; automatic startup requires an OS service (provided by the author's
+dotfiles deployment).
 
 ## Quickstart
 
@@ -65,6 +87,7 @@ agent-profiler logs        Print the last 100 lines of server logs
 agent-profiler logs -f     Tail server logs (follow mode)
 agent-profiler open        Open the web UI in your browser
 agent-profiler import opencode   Import historical OpenCode V2 sessions
+agent-profiler demo [--no-open]  Explore disposable synthetic data (local preview)
 ```
 
 ### Import existing OpenCode sessions
@@ -148,16 +171,41 @@ AGENT_PROFILER_ENDPOINT=http://my-server:7070/v1/traces opencode
 
 ## What it does
 
+The unpublished UI redesign uses a graphite, keyboard-first workbench for reviewing
+agent behavior before refining instructions, skills and tool definitions. Session
+review leads to findings, turns and original evidence; it does not infer which
+configuration caused an outcome. Press `?` for shortcuts, `⌘/Ctrl K` for search,
+`G S` for session review, `G C` for comparison, `/` to filter, and `J/K` then
+`Enter` to open a session. Persistent ASCII animal backgrounds appear on every
+page. The header's **Background** control explores sharks, rays, seahorses and
+jellyfish (or an ocean mix); scene preferences are saved locally. Pause and
+reduced motion retain a still scene. Reading areas attenuate the background so
+captured evidence stays legible.
+
 - **Ingests** OpenInference OTLP/HTTP-JSON traces from any harness
 - **Normalizes** spans into a structured SQLite schema (sessions → turns → LLM calls + tool calls)
-- **Profiles** every session automatically with five classical analyzers:
-  - **Cache efficiency** — hit ratio, prefix-volatility score, cache-busting change detection
-  - **Latency & token attribution** — per-tool, per-model rollups with p50/p95
-  - **Prompt composition** — segment treemap, tool-def bloat detection, duplicate detection
-  - **Model right-sizing** — under/over-powered turn flags (corrective messages, error finishes, cost z-scores)
-  - **Cross-harness comparison** — metric deltas with 95% bootstrap confidence intervals
-- **Streams** live events over SSE as traces arrive
+- **Reconciles current findings** automatically; unchanged reruns do not accumulate
+  warnings, and findings retire when corrected evidence no longer supports them.
+- **Exposes recorded errors and coverage** with inspectable evidence; user stops
+  remain distinct from failures. Errors do not establish model inadequacy.
+- **Reports measured usage** and accumulated durations without inventing prompt
+  percentages, cache-miss causes, or billing estimates. Comparisons use unmatched
+  cohorts with input-token-weighted cache shares; no winner or confidence interval
+  is inferred.
+- **Groups live activity by session**, with authoritative totals, explicit stale
+  reads, pause/raw views, reconnect state, and bounded retention. Events invalidate
+  reads; their snapshots are never summed as usage deltas.
 - **Serves** a keyboard-driven React SPA on the same port
+
+Trace requests commit atomically. Invalid envelopes or negative/nonfinite usage
+return HTTP 400 without partial writes or events. Successful ingestion returns
+204; if data committed but automatic analysis failed, HTTP 202 explicitly reports
+`accepted: true, analysis: "failed"`. Refresh findings to retry analysis.
+
+The session list loads the latest 200 sessions; comparisons inspect the latest
+1000. Activity retains 100 session groups and 200 raw receipts in browser memory,
+not a durable replay log. See [local improvement cycles](docs/IMPROVEMENT-CYCLES.md)
+for verification and remaining limits.
 
 ## Architecture
 

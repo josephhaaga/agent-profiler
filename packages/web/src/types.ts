@@ -25,6 +25,9 @@ export interface SessionRecord extends UsageRecord {
   toolCallCount: number;
   costTotal: number | null;
   endReason?: string;
+  toolErrorCount?: number;
+  modelErrorCount?: number;
+  turnErrorCount?: number;
 }
 
 export interface TurnRecord extends UsageRecord {
@@ -98,17 +101,19 @@ export interface CompareResult {
   metrics: Array<{
     harness: string;
     sessionCount: number;
-    meanCacheHitRatio: number;
+    meanCacheHitRatio: number | null;
     meanTokensPerTurn: number;
     meanCostPerTurn: number;
-    meanLatencyMsPerTurn: number;
+    meanLatencyMsPerTurn: number | null;
     meanTurnsPerSession: number;
   }>;
   pairwiseDeltas: Array<{
     from: string; to: string;
-    cacheHitRatioDelta: { delta: number; ciLow: number; ciHigh: number };
-    tokensPerTurnDelta: { delta: number; ciLow: number; ciHigh: number };
-    costPerTurnDelta: { delta: number; ciLow: number; ciHigh: number };
+    cacheHitRatioDelta: { delta: number | null; ciLow: number | null; ciHigh: number | null };
+    tokensPerTurnDelta: { delta: number; ciLow: number | null; ciHigh: number | null };
+    costPerTurnDelta: { delta: number; ciLow: number | null; ciHigh: number | null };
   }>;
   insights: Insight[];
+  comparisonBasis?: string;
+  excludedSessionCount?: number;
 }

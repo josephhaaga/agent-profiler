@@ -52,6 +52,9 @@ export interface SessionRecord {
   cacheWriteTokens: number;
   costTotal: number;
   endReason?: string;
+  toolErrorCount?: number;
+  modelErrorCount?: number;
+  turnErrorCount?: number;
 }
 
 export interface TurnRecord {

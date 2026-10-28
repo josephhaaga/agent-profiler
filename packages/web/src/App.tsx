@@ -1,54 +1,27 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
-  Activity, ArrowLeft, ChevronRight, Command, GitCompare,
-  Info, LayoutDashboard, Loader2, Radio, TriangleAlert, X,
+  ChevronRight, Command, GitCompare, Circle, CircleAlert, Search,
+  Info, LayoutDashboard, Loader2, Radio, X, Menu, Keyboard, SlidersHorizontal, Layers, RefreshCw,
 } from "lucide-react";
 import { api } from "./api";
 import type {
-  CompareResult, Insight, LlmCallRecord, PromptSegmentRecord,
+  Insight, LlmCallRecord,
   SessionRecord, ToolCallRecord, TurnRecord,
 } from "./types";
 import { useLiveTail } from "./useLiveTail";
+import { LiveActivity } from "./LiveActivity";
+import { AnimalBackground } from "./AnimalBackground";
+import { useResource } from "./useResource";
+import { ago, cacheRatio, fmt, fmtCost, fmtMs, fmtRatio } from "./format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-
-// ── Formatters ────────────────────────────────────────────────────────────────
-
-function fmt(n: number | null, decimals = 0): string {
-  if (n == null || !Number.isFinite(n)) return "Unknown";
-  return n.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-}
-function fmtMs(ms: number | null): string {
-  if (ms == null || !Number.isFinite(ms)) return "Unknown";
-  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
-}
-function fmtCost(c: number | null): string {
-  if (c == null || !Number.isFinite(c)) return "Unknown";
-  return c < 0.001 ? `$${(c * 1000).toFixed(3)}m` : `$${c.toFixed(4)}`;
-}
-function fmtRatio(r: number): string {
-  if (!Number.isFinite(r)) return "Unknown";
-  return `${(r * 100).toFixed(1)}%`;
-}
-function ago(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
-  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
-  return new Date(iso).toLocaleDateString();
-}
-function cacheRatio(s: { promptTokens: number | null; cacheReadTokens: number | null }): number {
-  if (s.promptTokens == null || s.cacheReadTokens == null) return NaN;
-  return s.promptTokens > 0 ? s.cacheReadTokens / s.promptTokens : 0;
-}
 
 // ── View types ────────────────────────────────────────────────────────────────
 
@@ -62,37 +35,28 @@ type View =
 
 // ── Insight severity helpers ──────────────────────────────────────────────────
 
-function InsightBadge({ severity }: { severity: Insight["severity"] }) {
-  const variant =
-    severity === "critical" ? "critical" : severity === "warn" ? "warn" : "info";
-  const Icon = severity === "critical" ? TriangleAlert : severity === "warn" ? TriangleAlert : Info;
-  return (
-    <Badge variant={variant} className="gap-1">
-      <Icon className="h-2.5 w-2.5" />
-      {severity}
-    </Badge>
-  );
+function ReadError({ error, onRetry }: { error?: string; onRetry: () => void }) {
+  return error ? <div role="alert" className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm"><p>Cannot refresh this view. Last loaded values, if any, may be stale. <span className="text-secondary-foreground">{error}</span></p><Button onClick={onRetry}>Retry read</Button></div> : null;
 }
 
 // Prominent insight card — Tufte: the insight IS the headline
-function InsightCard({ insight }: { insight: Insight }) {
-  const border =
-    insight.severity === "critical"
-      ? "border-red-500/30 bg-red-500/5"
-      : insight.severity === "warn"
-        ? "border-amber-500/25 bg-amber-500/5"
-        : "border-border bg-card";
+function InsightCard({ insight, onInspect }: { insight: Insight; onInspect?: () => void }) {
   return (
-    <div className={cn("rounded-lg border px-4 py-3", border)}>
-      <div className="flex items-start gap-3">
-        <InsightBadge severity={insight.severity} />
+    <article className="finding-row">
+      <div>
+        {insight.severity === "info" ? <Info className="mt-0.5 h-4 w-4 text-muted-foreground" aria-label="Observation" /> : <CircleAlert className="mt-0.5 h-4 w-4 text-amber" aria-label="Recorded issue" />}
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-foreground leading-snug">{insight.title}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">{insight.summary}</p>
+          <p className="mt-1.5 max-w-[72ch] text-[13px] leading-relaxed text-secondary-foreground">{insight.summary}</p>
+          <details className="mt-2 text-xs"><summary className="cursor-pointer text-primary">Inspect evidence</summary>
+            <dl className="mt-2 grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1">
+              {Object.entries(insight.evidence).map(([key, value]) => <div key={key} className="contents"><dt className="break-words text-secondary-foreground">{key.replace(/([A-Z])/g, " $1").toLowerCase()}</dt><dd className="break-words tabular-nums">{value == null ? "Unknown" : typeof value === "object" ? JSON.stringify(value) : String(value)}</dd></div>)}
+            </dl>
+            {onInspect && <Button className="mt-2" size="sm" onClick={onInspect}>Open recorded context</Button>}
+          </details>
         </div>
-        <code className="shrink-0 text-[10px] text-muted-foreground font-mono">{insight.kind}</code>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -104,18 +68,18 @@ function MetricRow({
   metrics: Array<{ label: string; value: string; delta?: string; deltaDir?: "up" | "down" | "neutral"; highlight?: "ok" | "warn" }>;
 }) {
   return (
-    <div className="flex flex-wrap gap-x-8 gap-y-3 py-3">
+    <div className="metric-baseline">
       {metrics.map((m) => (
         <div key={m.label} className="flex flex-col gap-0.5">
-          <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+          <span className="metric-label">
             {m.label}
           </span>
           <div className="flex items-baseline gap-1.5">
             <span
               className={cn(
-                "text-base font-semibold tabular-nums",
-                m.highlight === "ok" && "text-[hsl(var(--green))]",
-                m.highlight === "warn" && "text-[hsl(var(--amber))]",
+                "metric-value",
+                m.highlight === "ok" && "text-green",
+                m.highlight === "warn" && "text-amber",
                 !m.highlight && "text-foreground"
               )}
             >
@@ -125,8 +89,8 @@ function MetricRow({
               <span
                 className={cn(
                   "text-[10px] font-medium tabular-nums",
-                  m.deltaDir === "up" && "text-[hsl(var(--green))]",
-                  m.deltaDir === "down" && "text-[hsl(var(--red))]",
+                  m.deltaDir === "up" && "text-green",
+                  m.deltaDir === "down" && "text-red",
                   m.deltaDir === "neutral" && "text-muted-foreground"
                 )}
               >
@@ -142,17 +106,18 @@ function MetricRow({
 
 // ── Sessions Explorer ─────────────────────────────────────────────────────────
 
-function SessionsView({ onSelect }: { onSelect: (id: string) => void }) {
-  const [sessions, setSessions] = useState<SessionRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [sortKey, setSortKey] = useState<keyof SessionRecord>("startedAt");
+function SessionsView({ onSelect, sessions, loading, error, onRetry }: {
+  onSelect: (id: string) => void; sessions: SessionRecord[]; loading: boolean; error?: string; onRetry: () => void;
+}) {
+  type SortKey = keyof SessionRecord | "cacheHitRatio";
+  const [sortKey, setSortKey] = useState<SortKey>("startedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [filter, setFilter] = useState("");
-
-  useEffect(() => {
-    setLoading(true);
-    api.sessions().then((d) => setSessions(d.sessions)).catch(console.error).finally(() => setLoading(false));
-  }, []);
+  const [errorsOnly, setErrorsOnly] = useState(false);
+  const [partialOnly, setPartialOnly] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
+  const hasRecordedErrors = (s: SessionRecord) => (s.toolErrorCount ?? 0) + (s.modelErrorCount ?? 0) + (s.turnErrorCount ?? 0) > 0;
 
   const sorted = useMemo(() => {
     const filtered = filter
@@ -165,61 +130,96 @@ function SessionsView({ onSelect }: { onSelect: (id: string) => void }) {
             s.harness.includes(filter)
         )
       : sessions;
-    return [...filtered].sort((a, b) => {
-      const av = a[sortKey], bv = b[sortKey];
+    return filtered.filter(s => (!errorsOnly || hasRecordedErrors(s)) && (!partialOnly || s.capture?.partial)).sort((a, b) => {
+      const av = sortKey === "cacheHitRatio" ? cacheRatio(a) : a[sortKey];
+      const bv = sortKey === "cacheHitRatio" ? cacheRatio(b) : b[sortKey];
+      const aUnknown = av == null || (typeof av === "number" && !Number.isFinite(av));
+      const bUnknown = bv == null || (typeof bv === "number" && !Number.isFinite(bv));
+      if (aUnknown || bUnknown) return aUnknown === bUnknown ? 0 : aUnknown ? 1 : -1;
       const cmp = typeof av === "number" && typeof bv === "number"
         ? av - bv : String(av ?? "").localeCompare(String(bv ?? ""));
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [sessions, filter, sortKey, sortDir]);
+  }, [sessions, filter, sortKey, sortDir, errorsOnly, partialOnly]);
 
-  function toggleSort(key: keyof SessionRecord) {
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || target?.closest('input,textarea,select,[contenteditable="true"],[role="dialog"]')) return;
+      if (event.key === "j" || event.key === "k") {
+        if (!sorted.length) return;
+        event.preventDefault();
+        const current = sorted.findIndex(s => s.id === selectedId);
+        const next = Math.max(0, Math.min(sorted.length - 1, current < 0 ? 0 : current + (event.key === "j" ? 1 : -1)));
+        setSelectedId(sorted[next].id);
+        document.getElementById(`session-row-${sorted[next].id}`)?.scrollIntoView({ block: "nearest" });
+      } else if (event.key === "Enter" && selectedId && sorted.some(s => s.id === selectedId) && !target?.closest('button,a,summary')) {
+        event.preventDefault(); onSelect(selectedId);
+      }
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, [sorted, selectedId, onSelect]);
+
+  function toggleSort(key: SortKey) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir("desc"); }
   }
 
-  function SortHead({ col, label }: { col: keyof SessionRecord; label: string }) {
+  function SortHead({ col, label, desktop = false }: { col: SortKey; label: string; desktop?: boolean }) {
     const active = sortKey === col;
     return (
       <TableHead
-        className={cn("cursor-pointer select-none hover:text-foreground", active && "text-foreground")}
-        onClick={() => toggleSort(col)}
+        className={cn("select-none", desktop && "session-desktop", active && "text-foreground")}
+        aria-sort={active ? sortDir === "asc" ? "ascending" : "descending" : "none"}
       >
-        {label}{active ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+        <button className="rounded py-1 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => toggleSort(col)}>{label}{active ? (sortDir === "asc" ? " ↑" : " ↓") : ""}</button>
       </TableHead>
     );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
-        <h1 className="text-lg font-semibold">Sessions</h1>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div><h1 className="page-title">Session review</h1><p className="page-description">Understand what happened. Decide what to change in your agent environment.</p></div>
+        <Button variant="ghost" size="sm" onClick={onRetry} disabled={loading} aria-label="Refresh sessions"><RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />Refresh</Button>
+      </div>
+      <div className="list-toolbar">
+        <div className="view-tabs" role="group" aria-label="Session views">
+          <button aria-pressed={!errorsOnly && !partialOnly} onClick={() => { setErrorsOnly(false); setPartialOnly(false); }}>All sessions<span>{sessions.length}</span></button>
+          <button aria-pressed={errorsOnly} onClick={() => { setErrorsOnly(true); setPartialOnly(false); }}>Recorded errors<span>{sessions.filter(hasRecordedErrors).length}</span></button>
+          <button aria-pressed={partialOnly} onClick={() => { setPartialOnly(true); setErrorsOnly(false); }}>Partial capture<span>{sessions.filter(s => s.capture?.partial).length}</span></button>
+        </div>
+        <div className="relative ml-auto w-full sm:w-56"><Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
         <Input
-          className="w-64"
+          ref={filterRef}
+          className="pl-8 pr-7"
           placeholder="Filter sessions…"
+          aria-label="Filter loaded sessions"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
+        <kbd className="pointer-events-none absolute right-2 top-1.5">/</kbd></div>
       </div>
 
-      {loading ? (
+      {error && <div role="alert" className="flex items-center justify-between gap-3 text-sm"><p>Cannot refresh sessions. {sessions.length ? "Showing the last loaded snapshot." : "This is a read error, not an empty history."} <span className="text-secondary-foreground">{error}</span></p><Button onClick={onRetry} disabled={loading}>Retry</Button></div>}
+
+      {loading && !sessions.length ? (
         <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
           <Loader2 className="h-4 w-4 animate-spin" /> Loading…
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden">
+        <div className="table-frame">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <SortHead col="title" label="Session" />
-                <SortHead col="startedAt" label="Started" />
-                <SortHead col="harness" label="Harness" />
-                <SortHead col="agent" label="Agent" />
-                <SortHead col="model" label="Model" />
-                <SortHead col="turnCount" label="Turns" />
-                <SortHead col="promptTokens" label="Prompt tok" />
-                <SortHead col="cacheReadTokens" label="Cache hit" />
-                <SortHead col="costTotal" label="Cost" />
+                <SortHead col="startedAt" label="Started" desktop />
+                <SortHead col="model" label="Model" desktop />
+                <SortHead col="turnCount" label="Turns" desktop />
+                <SortHead col="promptTokens" label="Input tokens" desktop />
+                <SortHead col="cacheHitRatio" label="Cached input" desktop />
+                <SortHead col="costTotal" label="Recorded cost" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -228,52 +228,47 @@ function SessionsView({ onSelect }: { onSelect: (id: string) => void }) {
                 return (
                   <TableRow
                     key={s.id}
+                    id={`session-row-${s.id}`}
+                    data-state={s.id === selectedId ? "selected" : undefined}
                     className="cursor-pointer"
                     onClick={() => onSelect(s.id)}
                   >
-                    <TableCell className="min-w-48 max-w-sm">
-                      <span className="block truncate font-medium" title={s.title || "Untitled session"}>{s.title || "Untitled session"}</span>
-                      <code className="block truncate text-[11px] text-muted-foreground" title={s.id}>{s.id}</code>
+                    <TableCell className="min-w-40 max-w-52 sm:min-w-64 sm:max-w-sm">
+                      <div className="session-name">
+                      {hasRecordedErrors(s) ? <CircleAlert className="session-state error" aria-label="Recorded errors" /> : <Circle className="session-state" aria-label="No recorded errors" />}
+                      <div className="min-w-0">
+                      <a href={`#/sessions/${s.id}`} className="block truncate rounded font-medium hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" title={s.title || "Untitled session"} onClick={e => { e.stopPropagation(); if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); onSelect(s.id); }}>{s.title || "Untitled session"}</a>
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{s.harness}{s.agent ? ` · ${s.agent}` : ""}{s.capture?.partial ? " · Partial capture" : ""}</span>
+                      {hasRecordedErrors(s) && <span className="block text-xs text-amber">{[s.toolErrorCount ? `${s.toolErrorCount} tool ${s.toolErrorCount === 1 ? "error" : "errors"}` : "", s.modelErrorCount ? `${s.modelErrorCount} model ${s.modelErrorCount === 1 ? "error" : "errors"}` : "", s.turnErrorCount ? `${s.turnErrorCount} turn ${s.turnErrorCount === 1 ? "error" : "errors"}` : ""].filter(Boolean).join(" · ")}</span>}
+                      </div></div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{ago(s.startedAt)}</TableCell>
-                    <TableCell>
-                      {/* Tufte: left-border color strip instead of full badge pill */}
-                      <span className="flex items-center gap-1.5">
-                        <span
-                          className="inline-block w-0.5 h-4 rounded-full shrink-0"
-                          style={{
-                            background:
-                              s.harness === "opencode" ? "hsl(var(--primary))"
-                              : s.harness === "vscode" ? "hsl(var(--purple))"
-                              : "hsl(var(--muted-foreground))",
-                          }}
-                        />
-                        <span className="text-xs">{s.harness}</span>
-                      </span>
-                    </TableCell>
-                    <TableCell>{s.agent ?? <span className="text-muted-foreground">—</span>}</TableCell>
-                    <TableCell className="text-muted-foreground">{s.model ?? "—"}</TableCell>
-                    <TableCell className="tabular-nums">{fmt(s.turnCount)}</TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">{fmt(s.promptTokens)}</TableCell>
-                    <TableCell>
+                    <TableCell className="session-desktop text-muted-foreground">{ago(s.startedAt)}</TableCell>
+                    <TableCell className="session-desktop text-muted-foreground">{s.model ?? "—"}</TableCell>
+                    <TableCell className="session-desktop text-right tabular-nums">{fmt(s.turnCount)}</TableCell>
+                    <TableCell className="session-desktop text-right tabular-nums text-muted-foreground">{fmt(s.promptTokens)}</TableCell>
+                    <TableCell className="session-desktop">
                       <span className={cn(
-                        "tabular-nums font-medium",
-                        !Number.isFinite(hit) ? "text-muted-foreground" : hit > 0.5 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--amber))]"
+                        "block text-right tabular-nums font-medium",
+                        !Number.isFinite(hit) && "text-secondary-foreground"
                       )}>
                         {fmtRatio(hit)}
                       </span>
                     </TableCell>
-                    <TableCell className="tabular-nums font-medium">{fmtCost(s.costTotal)}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">{fmtCost(s.costTotal)}</TableCell>
                   </TableRow>
                 );
               })}
-              {!sorted.length && (
+              {!sorted.length && !error && (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground py-12">
-                    No sessions yet. Point your harness OTLP exporter at{" "}
-                    <code className="text-xs bg-secondary px-1 py-0.5 rounded">
-                      http://localhost:7070/v1/traces
-                    </code>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-12">
+                    {sessions.length ? "No loaded sessions match these filters. No recorded errors does not prove a successful run." : <>
+                       <p className="text-base font-medium text-foreground">Your next session starts here.</p>
+                      <p>The collector is reachable; instrumentation has not been verified.</p>
+                      <details className="mx-auto mt-3 max-w-lg text-left"><summary className="cursor-pointer text-primary">Connect OpenCode or import saved sessions</summary>
+                        <p className="mt-2">Add the plugin to your project&apos;s OpenCode configuration:</p><pre className="body-pre">{'{ "plugins": ["opencode-agent-profiler"] }'}</pre>
+                        <p className="mt-2">For existing OpenCode V2 history, run <code>agent-profiler import opencode</code>. Data stays in the local collector; imports include saved content.</p>
+                      </details>
+                    </>}
                   </TableCell>
                 </TableRow>
               )}
@@ -281,6 +276,7 @@ function SessionsView({ onSelect }: { onSelect: (id: string) => void }) {
           </Table>
         </div>
       )}
+      <div className="session-list-footer flex flex-wrap items-center justify-between gap-2 pt-2 text-xs text-muted-foreground"><span>{sorted.length} of {sessions.length} loaded sessions · Latest 200</span><span className="hidden sm:flex items-center gap-1.5"><kbd>J</kbd><kbd>K</kbd> select <span className="mx-1">·</span><kbd>Enter</kbd> open</span></div>
     </div>
   );
 }
@@ -304,40 +300,30 @@ function SessionTimeline({
   const padL = 36, padR = 8, padTop = 8, labelH = 20;
 
   const maxCost = Math.max(...turns.map((t) => t.cost ?? 0), 0.0001);
-  const maxTools = Math.max(...turns.map((t) => t.llmRoundTrips), 1);
   const n = turns.length;
-
-  // Colour thresholds
-  function barColor(t: TurnRecord) {
-    const ratio = cacheRatio(t);
-    if (ratio > 0.5) return "hsl(var(--green))";
-    if (t.cost != null && t.cost / maxCost > 0.6) return "hsl(var(--red))";
-    return "hsl(var(--primary))";
-  }
 
   const w = 100; // SVG user units per column (percent-like; viewBox sets scale)
   const totalW = n * w + padL + padR;
   const totalH = TOTAL_H + padTop + labelH;
 
-  // Build cache-hit polyline points
-  const polyline = turns
-    .map((t, i) => {
+  // Unknown turns create gaps, not a line implying an observed transition.
+  const polylines: string[][] = [[]];
+  turns.forEach((t, i) => {
       const cx = padL + i * w + w / 2;
       const ratio = cacheRatio(t);
-      if (!Number.isFinite(ratio)) return "";
+      if (!Number.isFinite(ratio)) { if (polylines.at(-1)!.length) polylines.push([]); return; }
       const y = padTop + BAR_H + LINE_H * (1 - ratio);
-      return `${cx},${y}`;
-    })
-    .join(" ");
+      polylines.at(-1)!.push(`${cx},${y}`);
+  });
 
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
         <span className="flex items-center gap-1">
-          <span className="inline-block w-2 h-2 rounded-sm bg-[hsl(var(--primary))]" /> cost/turn
+          <span className="inline-block w-2 h-2 rounded-sm bg-primary" /> recorded cost/turn
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block w-3 border-t-2 border-[hsl(var(--amber))]" /> cache hit %
+          <span className="inline-block w-3 border-t-2 border-amber" /> cached input %
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -356,7 +342,7 @@ function SessionTimeline({
                 y1={y}
                 x2={totalW - padR}
                 y2={y}
-                stroke="hsl(var(--border))"
+                stroke="var(--color-border)"
                 strokeWidth={0.5}
               />
             );
@@ -368,7 +354,7 @@ function SessionTimeline({
             y1={padTop + BAR_H + LINE_H * 0.5}
             x2={totalW - padR}
             y2={padTop + BAR_H + LINE_H * 0.5}
-            stroke="hsl(var(--amber))"
+            stroke="var(--color-amber)"
             strokeWidth={0.8}
             strokeDasharray="3 3"
             opacity={0.5}
@@ -378,14 +364,14 @@ function SessionTimeline({
             y={padTop + BAR_H + LINE_H * 0.5 + 1}
             textAnchor="end"
             fontSize={6}
-            fill="hsl(var(--amber))"
+            fill="var(--color-amber)"
             opacity={0.7}
           >50%</text>
 
           {/* Bars */}
           {turns.map((t, i) => {
-            if (t.cost == null) return null;
-            const bh = Math.max(2, (t.cost / maxCost) * BAR_H);
+            if (t.cost == null || t.cost < 0) return null;
+            const bh = t.cost === 0 ? 0 : Math.max(2, (t.cost / maxCost) * BAR_H);
             const x = padL + i * w + w * 0.15;
             const bw = w * 0.7;
             return (
@@ -396,7 +382,7 @@ function SessionTimeline({
                 width={bw}
                 height={bh}
                 rx={2}
-                fill={barColor(t)}
+                fill="var(--color-primary)"
                 opacity={0.85}
                 className="cursor-pointer hover:opacity-100 transition-opacity"
                 onClick={() => onTurnClick(t.id)}
@@ -407,14 +393,15 @@ function SessionTimeline({
           })}
 
           {/* Cache hit polyline */}
-          <polyline
-            points={polyline}
+          {polylines.filter(points => points.length > 1).map((points, index) => <polyline
+            key={index}
+            points={points.join(" ")}
             fill="none"
-            stroke="hsl(var(--amber))"
+            stroke="var(--color-amber)"
             strokeWidth={1.5}
             strokeLinejoin="round"
             opacity={0.9}
-          />
+          />)}
           {turns.map((t, i) => {
             const ratio = cacheRatio(t);
             if (!Number.isFinite(ratio)) return null;
@@ -426,32 +413,10 @@ function SessionTimeline({
                 cx={cx}
                 cy={cy}
                 r={3}
-                fill="hsl(var(--amber))"
+                fill="var(--color-amber)"
                 opacity={0.9}
                 className="cursor-pointer"
                 onClick={() => onTurnClick(t.id)}
-              />
-            );
-          })}
-
-          {/* Tool call dots (above bars) */}
-          {turns.map((t, i) => {
-            if (t.cost == null) return null;
-            const cx = padL + i * w + w / 2;
-            const r = 2 + (t.llmRoundTrips / maxTools) * 3;
-            const bh = Math.max(2, (t.cost / maxCost) * BAR_H);
-            const cy = padTop + BAR_H - bh - 4;
-            if (t.llmRoundTrips === 0) return null;
-            return (
-              <circle
-                key={t.id}
-                cx={cx}
-                cy={cy}
-                r={r}
-                fill="none"
-                stroke="hsl(var(--primary))"
-                strokeWidth={1}
-                opacity={0.6}
               />
             );
           })}
@@ -464,17 +429,17 @@ function SessionTimeline({
               y={totalH - 4}
               textAnchor="middle"
               fontSize={7}
-              fill="hsl(var(--muted-foreground))"
+              fill="var(--color-muted-foreground)"
             >
               {t.idx + 1}
             </text>
           ))}
 
           {/* Y-axis cost labels */}
-          <text x={padL - 2} y={padTop + 4} textAnchor="end" fontSize={6} fill="hsl(var(--muted-foreground))">
+          <text x={padL - 2} y={padTop + 4} textAnchor="end" fontSize={6} fill="var(--color-muted-foreground)">
             {fmtCost(maxCost)}
           </text>
-          <text x={padL - 2} y={padTop + BAR_H} textAnchor="end" fontSize={6} fill="hsl(var(--muted-foreground))">
+          <text x={padL - 2} y={padTop + BAR_H} textAnchor="end" fontSize={6} fill="var(--color-muted-foreground)">
             $0
           </text>
         </svg>
@@ -487,35 +452,45 @@ function SessionTimeline({
 
 function SessionDetailView({
   sessionId,
+  refreshKey,
   onTurnSelect,
   onCacheView,
+  onPromptView,
 }: {
   sessionId: string;
+  refreshKey: string;
   onTurnSelect: (turnId: string) => void;
   onCacheView: () => void;
+  onPromptView: (llmCallId: string) => void;
 }) {
-  const [session, setSession] = useState<SessionRecord | null>(null);
-  const [turns, setTurns] = useState<TurnRecord[]>([]);
-  const [insights, setInsights] = useState<Insight[]>([]);
+  const { data, error, refresh } = useResource(`session:${sessionId}`, refreshKey, async signal => {
+    const [s, t, i] = await Promise.all([api.session(sessionId, signal), api.turns(sessionId, signal), api.sessionInsights(sessionId, signal)]);
+    return { session: s.session, turns: t.turns, insights: i.insights };
+  });
+  const session = data?.session;
+  const turns = data?.turns ?? [];
+  const insights = data?.insights ?? [];
   const [profiling, setProfiling] = useState(false);
-
-  useEffect(() => {
-    api.session(sessionId).then((d) => setSession(d.session)).catch(console.error);
-    api.turns(sessionId).then((d) => setTurns(d.turns)).catch(console.error);
-    api.sessionInsights(sessionId).then((d) => setInsights(d.insights)).catch(console.error);
-  }, [sessionId]);
+  const [profileError, setProfileError] = useState<string>();
+  const [tab, setTab] = useState<"review" | "execution">("review");
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { setTab("review"); setCopied(false); }, [sessionId]);
 
   async function runProfile() {
     setProfiling(true);
     try {
-      const d = await api.profile(sessionId);
-      setInsights(d.insights);
+      setProfileError(undefined);
+      await api.profile(sessionId);
+      refresh();
+    } catch (cause) {
+      setProfileError(cause instanceof Error ? cause.message : "Analysis failed");
     } finally {
       setProfiling(false);
     }
   }
 
   if (!session) {
+    if (error) return <ReadError error={error} onRetry={refresh} />;
     return (
       <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
         <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -534,94 +509,91 @@ function SessionDetailView({
   const knownCostTurns = turns.filter((t): t is TurnRecord & { cost: number } => t.cost != null);
   const peakTurn = knownCostTurns.length > 0 ? knownCostTurns.reduce((a, b) => (b.cost > a.cost ? b : a)) : null;
   const peakFrac = peakTurn && session.costTotal != null && session.costTotal > 0 ? peakTurn.cost / session.costTotal : 0;
-  const lowestCacheTurn = turns.length > 0
-    ? turns.reduce((a, b) => {
+  const cacheTurns = turns.filter(t => Number.isFinite(cacheRatio(t)));
+  const lowestCacheTurn = cacheTurns.length > 0
+    ? cacheTurns.reduce((a, b) => {
         const ra = cacheRatio(a);
         const rb = cacheRatio(b);
         return rb < ra ? b : a;
       })
     : null;
+  const inspectFinding = (ins: Insight) => typeof ins.evidence.turnId === "string" ? () => onTurnSelect(ins.evidence.turnId as string)
+    : ins.scopeType === "turn" ? () => onTurnSelect(ins.scopeId)
+    : typeof ins.evidence.llmCallId === "string" ? () => onPromptView(ins.evidence.llmCallId as string)
+    : ins.kind.startsWith("cache.") ? onCacheView : undefined;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
+      <ReadError error={error ?? profileError} onRetry={refresh} />
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-0.5 min-w-0 max-w-3xl">
-          <h1 className="text-lg font-semibold break-words">{session.title || "Untitled session"}</h1>
-          <code className="text-[11px] text-muted-foreground font-mono">{session.id}</code>
+          <h1 className="page-title break-words">{session.title || "Untitled session"}</h1>
+          <p className="page-description">{session.harness} · {session.model || "Model not recorded"} · {new Date(session.startedAt).toLocaleString()}</p>
         </div>
         <div className="flex gap-2">
           <Button variant="ghost" size="sm" onClick={onCacheView}>Cache detail</Button>
           <Button variant="outline" size="sm" onClick={runProfile} disabled={profiling}>
-            {profiling ? <><Loader2 className="h-3 w-3 animate-spin" /> Running…</> : "Run profilers"}
+            {profiling ? <><Loader2 className="h-3 w-3 animate-spin" /> Running…</> : "Refresh findings"}
           </Button>
         </div>
       </div>
 
-      {/* Tufte: headline narrative first, then supporting data */}
+      <div className="flex items-center gap-1 border-b border-border" role="group" aria-label="Session sections">
+        <button className={cn("px-3 py-2.5 text-[13px] border-b-2", tab === "review" ? "border-primary text-foreground" : "border-transparent text-muted-foreground")} aria-pressed={tab === "review"} onClick={() => setTab("review")}>Review <span className="ml-1.5 text-muted-foreground">{insights.length}</span></button>
+        <button className={cn("px-3 py-2.5 text-[13px] border-b-2", tab === "execution" ? "border-primary text-foreground" : "border-transparent text-muted-foreground")} aria-pressed={tab === "execution"} onClick={() => setTab("execution")}>Turns & calls <span className="ml-1.5 text-muted-foreground">{turns.length}</span></button>
+      </div>
+      <div className="review-layout"><div className="min-w-0 space-y-6">
+      {tab === "review" && <>
       {session.capture?.partial && (
-        <p className="text-sm text-muted-foreground">
-          Imported history (partial). Exact outgoing prompts and historical tool schemas are unavailable.
+        <div className="workspace-note"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /><p>
+          {session.capture.source === "opencode-import" ? "Imported history (partial)." : "Partial capture."} Exact outgoing prompts and historical tool schemas may be unavailable.
           Missing usage is shown as Unknown, not zero. Recorded cost is not necessarily billed spend.
-        </p>
+        </p></div>
       )}
       {peakTurn && peakFrac > 0.25 && (
-        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-foreground">
-          Turn {peakTurn.idx + 1} consumed{" "}
-          <span className="font-semibold text-[hsl(var(--amber))]">{fmtRatio(peakFrac)}</span> of session cost
+        <p className="text-[13px] leading-relaxed text-secondary-foreground">
+          <button className="text-foreground underline" onClick={() => onTurnSelect(peakTurn.id)}>Turn {peakTurn.idx + 1}</button> accounts for{" "}
+          <span className="font-semibold text-amber">{fmtRatio(peakFrac)}</span> of session cost
           {lowestCacheTurn && lowestCacheTurn.id !== peakTurn.id && (
             <>
-              {". "}Lowest cache efficiency at turn {lowestCacheTurn.idx + 1}{" "}
-              <span className="font-semibold text-[hsl(var(--red))]">
+              {". "}Lowest recorded cached-input share at turn {lowestCacheTurn.idx + 1}{" "}
+              <span className="font-semibold">
                 ({fmtRatio(cacheRatio(lowestCacheTurn))})
               </span>
             </>
           )}.
-        </div>
+        </p>
       )}
 
       {/* Top-priority insights — before metrics, not after */}
       {topInsights.length > 0 && (
-        <div className="space-y-2">
+        <section><h2 className="section-heading">Findings to investigate</h2><p className="section-caption mb-4">Recorded observations, not a verdict on your configuration.</p><div className="findings-list">
           {topInsights.slice(0, 3).map((ins) => (
-            <InsightCard key={ins.id} insight={ins} />
+            <InsightCard key={ins.id} insight={ins} onInspect={inspectFinding(ins)} />
           ))}
           {topInsights.length > 3 && (
-            <p className="text-xs text-muted-foreground pl-1">
-              +{topInsights.length - 3} more insights — run profilers to see all
-            </p>
+            <details className="text-xs"><summary className="cursor-pointer py-2 text-primary">Show {topInsights.length - 3} more findings</summary><div className="space-y-2">{topInsights.slice(3).map(ins => <InsightCard key={ins.id} insight={ins} onInspect={inspectFinding(ins)} />)}</div></details>
           )}
-        </div>
+        </div></section>
       )}
 
-      {/* Metric baseline — max 5, no boxes */}
-      <Separator />
-      <MetricRow
-        metrics={[
-          { label: "Cost", value: fmtCost(session.costTotal) },
-          { label: "Cache hit", value: fmtRatio(hitRatio), highlight: !Number.isFinite(hitRatio) ? undefined : hitRatio < 0.3 ? "warn" : "ok" },
-          { label: "Prompt tok", value: fmt(session.promptTokens) },
-          { label: "Turns", value: fmt(session.turnCount) },
-          { label: "Tool calls", value: fmt(session.toolCallCount) },
-        ]}
-      />
-      <Separator />
+      {!topInsights.length && <div className="empty-workspace"><div><h2>No current findings</h2><p>There’s no flagged evidence in this capture. That doesn’t establish run quality. Inspect the turns to review what your agent actually did.</p><Button className="mt-5" onClick={() => setTab("execution")}>Explore turns & calls<ChevronRight className="h-3.5 w-3.5" /></Button></div></div>}
+      <p className="max-w-[72ch] border-t border-border pt-5 text-xs leading-relaxed text-muted-foreground">Refine one thing at a time. Inspect the original evidence before changing instructions, a skill, or a tool definition. This capture does not establish which configuration caused an outcome.</p>
+      </>}
 
       {/* Composite timeline */}
-      {turns.length > 1 && (
-        <div className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Cost & cache per turn — click to drill in
-          </h2>
+      {tab === "execution" && turns.length > 1 && (
+        <details className="rounded-md border border-border px-4 py-3"><summary className="section-heading cursor-pointer">Cost & cached input across turns</summary><div className="pt-4">
           <SessionTimeline turns={turns} onTurnClick={onTurnSelect} />
-        </div>
+        </div></details>
       )}
 
       {/* Slim turns table — 4 columns, not 8 */}
-      <div className="space-y-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+      {tab === "execution" && <div className="space-y-3">
+        <h2 className="section-heading">
           Turns ({turns.length})
         </h2>
-        <div className="rounded-lg border border-border overflow-hidden">
+        <div className="table-frame">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
@@ -638,14 +610,14 @@ function SessionDetailView({
                 return (
                   <TableRow key={t.id} className="cursor-pointer" onClick={() => onTurnSelect(t.id)}>
                     <TableCell className="text-muted-foreground tabular-nums">{t.idx + 1}</TableCell>
-                    <TableCell className="max-w-xs truncate text-muted-foreground">
-                      {t.userText?.slice(0, 80) ?? "—"}
+                    <TableCell className="max-w-xs truncate">
+                      <a href={`#/sessions/${sessionId}/turns/${t.id}`} className="hover:underline" onClick={e => { e.stopPropagation(); if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); onTurnSelect(t.id); }}>{t.userText?.slice(0, 100) || "Inspect turn"}</a>
                     </TableCell>
                     <TableCell className="tabular-nums font-medium">{fmtCost(t.cost)}</TableCell>
                     <TableCell>
                       <span className={cn(
                         "tabular-nums",
-                        !Number.isFinite(tr) ? "text-muted-foreground" : tr > 0.5 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--amber))]"
+                        !Number.isFinite(tr) ? "text-muted-foreground" : "text-secondary-foreground"
                       )}>
                         {fmtRatio(tr)}
                       </span>
@@ -667,49 +639,74 @@ function SessionDetailView({
             </TableBody>
           </Table>
         </div>
-      </div>
+      </div>}
+      </div><aside className="properties" aria-label="Session properties">
+        <h2 className="section-heading">Properties</h2>
+        <dl className="property-list">
+          <div><dt>Harness</dt><dd>{session.harness}</dd></div>
+          <div><dt>Model</dt><dd>{session.model || "Unknown"}</dd></div>
+          <div><dt>Capture</dt><dd>{session.capture?.source === "opencode-import" ? "Imported history" : session.capture?.source === "live" ? "Live capture" : "Source not recorded"}{session.capture?.partial ? " · Partial" : ""}</dd></div>
+          <div><dt>Turns</dt><dd>{fmt(session.turnCount)}</dd></div>
+          <div><dt>Model calls</dt><dd>{fmt(session.llmCallCount)}</dd></div>
+          <div><dt>Tool calls</dt><dd>{fmt(session.toolCallCount)}</dd></div>
+          <div><dt>Input tokens</dt><dd>{fmt(session.promptTokens)}</dd></div>
+          <div><dt>Cached input</dt><dd>{fmtRatio(hitRatio)}</dd></div>
+          <div><dt>Recorded cost</dt><dd>{fmtCost(session.costTotal)}</dd></div>
+        </dl>
+        <div className="mt-6 border-t border-border pt-5"><p className="text-xs text-muted-foreground">Session ID</p><code className="mt-2 block break-all text-[11px] text-secondary-foreground">{session.id}</code><Button variant="ghost" size="sm" className="mt-2" onClick={async () => { try { await navigator.clipboard.writeText(session.id); setCopied(true); } catch { setCopied(false); } }}>{copied ? "Copied" : "Copy ID"}</Button></div>
+        <p className="mt-5 text-xs leading-relaxed text-muted-foreground">Unknown is missing evidence, not zero. Recorded cost may differ from billed spend.</p>
+      </aside></div>
     </div>
   );
 }
 
-// ── Turn Detail / Waterfall ───────────────────────────────────────────────────
-// Tufte: waterfall only — 2 colors (LLM=blue, tool=amber), no co-located tables.
-// Click a bar to expand inline detail.
+// ── Turn detail / recorded span durations ─────────────────────────────────────
 
 function TurnDetailView({
   turnId,
   sessionId,
+  refreshKey,
   allTurns = [],
   onPromptView,
 }: {
   turnId: string;
   sessionId: string;
+  refreshKey: string;
   allTurns?: TurnRecord[];
   onPromptView: (llmCallId: string) => void;
 }) {
-  const [turn, setTurn] = useState<TurnRecord | null>(null);
-  const [llmCalls, setLlmCalls] = useState<LlmCallRecord[]>([]);
-  const [toolCalls, setToolCalls] = useState<ToolCallRecord[]>([]);
+  const { data, error, refresh } = useResource(`turn:${turnId}`, refreshKey, async signal => {
+    const [t, l, tools] = await Promise.all([api.turn(turnId, signal), api.llmCalls(turnId, signal), api.toolCalls(turnId, signal)]);
+    return { turn: t.turn, llmCalls: l.llmCalls, toolCalls: tools.toolCalls };
+  });
+  const turn = data?.turn;
+  const llmCalls = data?.llmCalls ?? [];
+  const toolCalls = data?.toolCalls ?? [];
   const [selectedSpan, setSelectedSpan] = useState<string | null>(null);
   const [blobCache, setBlobCache] = useState<Record<string, string>>({});
+  const [blobError, setBlobError] = useState<string>();
+  const currentTurn = useRef(turnId);
+  currentTurn.current = turnId;
 
-  useEffect(() => {
-    api.turns(sessionId).then((d) => {
-      const t = d.turns.find((x) => x.id === turnId);
-      if (t) setTurn(t);
-    });
-    api.llmCalls(turnId).then((d) => setLlmCalls(d.llmCalls));
-    api.toolCalls(turnId).then((d) => setToolCalls(d.toolCalls));
-  }, [turnId, sessionId]);
+  useEffect(() => { setSelectedSpan(null); setBlobCache({}); setBlobError(undefined); }, [turnId]);
 
   async function loadBlob(ref: string) {
-    if (!blobCache[ref]) {
+    if (Object.hasOwn(blobCache, ref)) {
+      setBlobCache(cache => { const next = { ...cache }; delete next[ref]; return next; });
+      return;
+    }
+    const requestedTurn = turnId;
+    try {
+      setBlobError(undefined);
       const text = await api.blob(ref);
-      setBlobCache((c) => ({ ...c, [ref]: text }));
+      if (currentTurn.current === requestedTurn) setBlobCache((c) => ({ ...c, [ref]: text }));
+    } catch (cause) {
+      if (currentTurn.current === requestedTurn) setBlobError(cause instanceof Error ? cause.message : "Evidence unavailable");
     }
   }
 
   if (!turn) {
+    if (error) return <ReadError error={error} onRetry={refresh} />;
     return (
       <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
         <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -783,9 +780,11 @@ function TurnDetailView({
 
   return (
     <div className="space-y-5">
+      <ReadError error={error} onRetry={refresh} />
+      {blobError && <p role="alert" className="workspace-note">{blobError}. Select the evidence button to retry.</p>}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-0.5">
-          <h1 className="text-lg font-semibold">Turn {turn.idx + 1}</h1>
+          <h1 className="page-title">Turn {turn.idx + 1}</h1>
           <code className="text-[11px] text-muted-foreground font-mono">{turn.id}</code>
         </div>
         {allTurns.length > 1 && (
@@ -803,7 +802,7 @@ function TurnDetailView({
 
       <MetricRow metrics={[
         { label: "Cost", value: fmtCost(turn.cost) },
-        { label: "Cache hit", value: fmtRatio(cacheRatio(turn)) },
+        { label: "Cached input", value: fmtRatio(cacheRatio(turn)) },
         { label: "LLM calls", value: fmt(turn.llmRoundTrips) },
         { label: "Prompt tok", value: fmt(turn.promptTokens) },
         { label: "Completion tok", value: fmt(turn.completionTokens) },
@@ -812,17 +811,16 @@ function TurnDetailView({
 
       {turn.userText && (
         <div className="space-y-1.5">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">User</h2>
+          <h2 className="section-heading">User message</h2>
           <pre className="body-pre">{turn.userText}</pre>
         </div>
       )}
 
       {turn.assistantText && (
         <div className="space-y-1.5">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Assistant</h2>
+          <h2 className="section-heading">Assistant response</h2>
           <pre className="body-pre">
-            {turn.assistantText.slice(0, 2000)}
-            {turn.assistantText.length > 2000 ? "\n…(truncated)" : ""}
+            {turn.assistantText}
           </pre>
         </div>
       )}
@@ -831,15 +829,15 @@ function TurnDetailView({
       {spans.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Span waterfall — click to expand
+            <h2 className="section-heading">
+              Span durations — longest first; select to inspect
             </h2>
             <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
               <span className="flex items-center gap-1">
-                <span className="inline-block w-2 h-2 rounded-sm bg-[hsl(var(--primary))]" /> LLM
+                <span className="inline-block w-2 h-2 rounded-sm bg-primary" /> LLM
               </span>
               <span className="flex items-center gap-1">
-                <span className="inline-block w-2 h-2 rounded-sm bg-[hsl(var(--amber))]" /> Tool
+                <span className="inline-block w-2 h-2 rounded-sm bg-amber" /> Tool
               </span>
             </div>
           </div>
@@ -849,11 +847,13 @@ function TurnDetailView({
               const isSelected = selectedSpan === span.id;
               return (
                 <div key={span.id} className="rounded-md overflow-hidden border border-transparent hover:border-border transition-colors">
-                  <div
-                    className="flex items-center gap-3 h-8 px-2 cursor-pointer"
+                  <button
+                    className="flex w-full items-center gap-3 min-h-10 px-2 text-left"
+                    aria-expanded={isSelected}
+                    aria-label={`Inspect ${span.type === "llm" ? "model call" : "tool"} ${span.name}, ${fmtMs(span.latencyMs)}`}
                     onClick={() => setSelectedSpan(isSelected ? null : span.id)}
                   >
-                    <span className="w-40 shrink-0 text-[11px] text-muted-foreground truncate" title={span.name}>
+                    <span className="w-24 sm:w-40 shrink-0 text-xs text-secondary-foreground truncate" title={span.name}>
                       {span.name}
                     </span>
                     <div className="flex-1 h-3.5 bg-secondary rounded-sm overflow-hidden">
@@ -869,7 +869,7 @@ function TurnDetailView({
                       {fmtMs(span.latencyMs)}
                     </span>
                     <ChevronRight className={cn("h-3 w-3 text-muted-foreground shrink-0 transition-transform", isSelected && "rotate-90")} />
-                  </div>
+                  </button>
                   {isSelected && (
                     <div className="px-3 pb-3 bg-card border-t border-border">
                       <SpanDetail span={span} />
@@ -887,16 +887,16 @@ function TurnDetailView({
 
 // ── Cache Panel — 100% normalized bars + aggregate reference line ─────────────
 
-function CachePanelView({ sessionId }: { sessionId: string }) {
-  const [turns, setTurns] = useState<TurnRecord[]>([]);
-  const [session, setSession] = useState<SessionRecord | null>(null);
-
-  useEffect(() => {
-    api.session(sessionId).then((d) => setSession(d.session));
-    api.turns(sessionId).then((d) => setTurns(d.turns));
-  }, [sessionId]);
+function CachePanelView({ sessionId, refreshKey, onTurnSelect }: { sessionId: string; refreshKey: string; onTurnSelect: (id: string) => void }) {
+  const { data, error, refresh } = useResource(`cache:${sessionId}`, refreshKey, async signal => {
+    const [s, t] = await Promise.all([api.session(sessionId, signal), api.turns(sessionId, signal)]);
+    return { session: s.session, turns: t.turns };
+  });
+  const session = data?.session;
+  const turns = data?.turns ?? [];
 
   if (!session) {
+    if (error) return <ReadError error={error} onRetry={refresh} />;
     return (
       <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
         <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -905,7 +905,7 @@ function CachePanelView({ sessionId }: { sessionId: string }) {
   }
 
   const sessionHitRatio = cacheRatio(session);
-  const turnSeries = turns.filter(t => Number.isFinite(cacheRatio(t))).map((t) => ({
+  const turnSeries = turns.map((t) => ({
     idx: t.idx + 1,
     id: t.id,
     ratio: cacheRatio(t),
@@ -913,7 +913,7 @@ function CachePanelView({ sessionId }: { sessionId: string }) {
   }));
 
   const CHART_H = 120;
-  const padL = 28, padR = 8, padTop = 8, labelH = 16;
+  const padL = 28, padR = 8, padTop = 8, labelH = 30;
   const n = turnSeries.length || 1;
   const colW = 40;
   const totalW = n * colW + padL + padR;
@@ -921,10 +921,12 @@ function CachePanelView({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-lg font-semibold">Cache Detail</h1>
+      <h1 className="page-title">Cache detail</h1>
+      <ReadError error={error} onRetry={refresh} />
+      <p className="text-sm text-secondary-foreground">Cached-input share = recorded cache-read tokens ÷ recorded total input tokens. It is not a fraction of model context capacity or a diagnosis of cache misses.</p>
 
       <MetricRow metrics={[
-        { label: "Overall hit ratio", value: fmtRatio(sessionHitRatio), highlight: !Number.isFinite(sessionHitRatio) ? undefined : sessionHitRatio > 0.5 ? "ok" : "warn" },
+        { label: "Token-weighted cached input", value: fmtRatio(sessionHitRatio) },
         { label: "Cache-read tok", value: fmt(session.cacheReadTokens) },
         { label: "Cache-write tok", value: fmt(session.cacheWriteTokens) },
       ]} />
@@ -933,12 +935,12 @@ function CachePanelView({ sessionId }: { sessionId: string }) {
       {/* 100% normalized bars — Tufte: each bar same height, fraction is the signal */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Cache hit fraction per turn (normalized)
+          <h2 className="section-heading">
+            Cached input per turn — select a turn to inspect
           </h2>
           <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
             <span className="flex items-center gap-1">
-              <span className="inline-block w-2 h-2 rounded-sm bg-[hsl(var(--green))]" /> cache read
+              <span className="inline-block w-2 h-2 rounded-sm bg-green" /> cache read
             </span>
             <span className="flex items-center gap-1">
               <span className="inline-block w-2 h-2 rounded-sm bg-secondary" /> prompt total
@@ -956,8 +958,8 @@ function CachePanelView({ sessionId }: { sessionId: string }) {
               const y = padTop + CHART_H * (1 - frac);
               return (
                 <g key={frac}>
-                  <line x1={padL} y1={y} x2={totalW - padR} y2={y} stroke="hsl(var(--border))" strokeWidth={0.5} />
-                  <text x={padL - 2} y={y + 2} textAnchor="end" fontSize={6} fill="hsl(var(--muted-foreground))">
+                  <line x1={padL} y1={y} x2={totalW - padR} y2={y} stroke="var(--color-border)" strokeWidth={0.5} />
+                  <text x={padL - 2} y={y + 2} textAnchor="end" fontSize={6} fill="var(--color-muted-foreground)">
                     {Math.round(frac * 100)}%
                   </text>
                 </g>
@@ -965,12 +967,12 @@ function CachePanelView({ sessionId }: { sessionId: string }) {
             })}
 
             {/* Session-average reference line */}
-            <line
+            {Number.isFinite(sessionHitRatio) && <><line
               x1={padL}
               y1={padTop + CHART_H * (1 - sessionHitRatio)}
               x2={totalW - padR}
               y2={padTop + CHART_H * (1 - sessionHitRatio)}
-              stroke="hsl(var(--amber))"
+              stroke="var(--color-amber)"
               strokeWidth={1}
               strokeDasharray="4 2"
             />
@@ -979,40 +981,44 @@ function CachePanelView({ sessionId }: { sessionId: string }) {
               y={padTop + CHART_H * (1 - sessionHitRatio) - 2}
               textAnchor="end"
               fontSize={6}
-              fill="hsl(var(--amber))"
+              fill="var(--color-amber)"
             >
-              avg {fmtRatio(sessionHitRatio)}
-            </text>
+              session {fmtRatio(sessionHitRatio)}
+            </text></>}
 
             {/* Normalized bars */}
             {turnSeries.map((t, i) => {
               const x = padL + i * colW + colW * 0.15;
               const bw = colW * 0.7;
               const fullH = CHART_H;
-              const hitH = fullH * t.ratio;
+              const known = Number.isFinite(t.ratio);
+              const hitH = known ? fullH * t.ratio : 0;
               return (
-                <g key={t.id}>
+                <a key={t.id} href={`#/sessions/${sessionId}/turns/${t.id}`} aria-label={`Inspect turn ${t.idx}: ${fmtRatio(t.ratio)} cached input, ${fmt(t.prompt)} total input tokens`} onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); onTurnSelect(t.id); }}>
+                  <title>{`Turn ${t.idx}: ${fmtRatio(t.ratio)} cached input; ${fmt(t.prompt)} total input tokens`}</title>
                   {/* Full bar (prompt total) */}
-                  <rect x={x} y={padTop} width={bw} height={fullH} rx={2} fill="hsl(var(--secondary))" />
+                  <rect x={x} y={padTop} width={bw} height={fullH} rx={2} fill={known ? "var(--color-secondary)" : "none"} stroke={known ? "none" : "var(--color-border)"} strokeDasharray={known ? undefined : "3 3"} />
                   {/* Cache read portion */}
-                  <rect
+                  {known ? <rect
                     x={x}
                     y={padTop + fullH - hitH}
                     width={bw}
-                    height={Math.max(hitH, 1)}
+                    height={hitH}
                     rx={2}
-                    fill="hsl(var(--green))"
+                    fill="var(--color-green)"
                     opacity={0.85}
-                  />
+                  /> : <text x={x + bw / 2} y={padTop + fullH / 2} textAnchor="middle" fontSize={6} fill="var(--color-secondary-foreground)">Unknown</text>}
                   {/* Turn label */}
-                  <text x={x + bw / 2} y={totalH - 2} textAnchor="middle" fontSize={7} fill="hsl(var(--muted-foreground))">
+                  <text x={x + bw / 2} y={totalH - 16} textAnchor="middle" fontSize={7} fill="var(--color-secondary-foreground)">
                     {t.idx}
                   </text>
-                </g>
+                  <text x={x + bw / 2} y={totalH - 4} textAnchor="middle" fontSize={6} fill="var(--color-secondary-foreground)">{fmt(t.prompt)} tok</text>
+                </a>
               );
             })}
           </svg>
         </div>
+        <p className="text-xs text-secondary-foreground">Input volume is shown below each turn. Gaps are unknown, not zero. The dashed session reference is token-weighted, not a performance target.</p>
       </div>
     </div>
   );
@@ -1021,37 +1027,35 @@ function CachePanelView({ sessionId }: { sessionId: string }) {
 // ── Prompt Inspector — treemap strip only (no redundant table) ────────────────
 
 const SEG_COLORS: Record<string, string> = {
-  system: "hsl(var(--primary))",
-  tool: "hsl(var(--amber))",
-  mcp: "hsl(var(--purple))",
-  skill: "hsl(var(--green))",
-  user: "hsl(var(--muted-foreground))",
-  assistant: "hsl(258 90% 60%)",
-  instructions: "hsl(var(--primary))",
+  system: "var(--color-primary)",
+  tool: "var(--color-amber)",
+  mcp: "var(--color-purple)",
+  skill: "var(--color-green)",
+  user: "var(--color-muted-foreground)",
+  assistant: "var(--color-purple)",
+  instructions: "var(--color-primary)",
 };
-function segColor(k: string) { return SEG_COLORS[k] ?? "hsl(var(--muted-foreground))"; }
+function segColor(k: string) { return SEG_COLORS[k] ?? "var(--color-muted-foreground)"; }
 
 function PromptInspectorView({ llmCallId, sessionId }: { llmCallId: string; sessionId: string }) {
-  const [segments, setSegments] = useState<PromptSegmentRecord[]>([]);
-  const [messages, setMessages] = useState<string | null>(null);
-  const [llmCall, setLlmCall] = useState<LlmCallRecord | null>(null);
+  const { data, error, refresh } = useResource(`prompt:${llmCallId}`, sessionId, async signal => {
+    const [{ segments }, { turns }] = await Promise.all([api.segments(llmCallId, signal), api.turns(sessionId, signal)]);
+    const batches = await Promise.all(turns.map(t => api.llmCalls(t.id, signal)));
+    const llmCall = batches.flatMap(b => b.llmCalls).find(c => c.id === llmCallId);
+    if (!llmCall) throw new Error("This model call was not found in the session's recorded turns");
+    return { segments, llmCall };
+  });
+  const segments = data?.segments ?? [];
+  const llmCall = data?.llmCall;
+  const { data: messages, error: messagesError, refresh: retryMessages } = useResource(`messages:${llmCallId}`, llmCall?.inputMessagesRef ?? "none", async signal => llmCall?.inputMessagesRef ? api.blob(llmCall.inputMessagesRef, signal) : null);
   const [selectedSeg, setSelectedSeg] = useState<number | null>(null);
-
-  useEffect(() => {
-    api.segments(llmCallId).then((d) => setSegments(d.segments));
-    api.llmCalls(sessionId).then((d) => {
-      const c = d.llmCalls.find((x) => x.id === llmCallId);
-      if (c) {
-        setLlmCall(c);
-        if (c.inputMessagesRef) api.blob(c.inputMessagesRef).then(setMessages);
-      }
-    });
-  }, [llmCallId, sessionId]);
+  useEffect(() => setSelectedSeg(null), [llmCallId]);
 
   const totalChars = segments.reduce((s, x) => s + x.charLen, 0);
   const totalTokens = segments.reduce((s, x) => s + x.tokenEst, 0);
 
   if (!llmCall) {
+    if (error) return <ReadError error={error} onRetry={refresh} />;
     return (
       <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
         <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -1062,9 +1066,12 @@ function PromptInspectorView({ llmCallId, sessionId }: { llmCallId: string; sess
   return (
     <div className="space-y-5">
       <div className="space-y-0.5">
-        <h1 className="text-lg font-semibold">Prompt Inspector</h1>
+        <h1 className="page-title">Prompt inspector</h1>
         <code className="text-[11px] text-muted-foreground font-mono">{llmCallId}</code>
       </div>
+      <ReadError error={error} onRetry={refresh} />
+      <ReadError error={messagesError} onRetry={retryMessages} />
+      <p className="page-description">Inspect what was captured before changing an instruction, skill, or tool definition. Missing source attribution is not reconstructed.</p>
 
       <MetricRow metrics={[
         { label: "Model", value: llmCall.model },
@@ -1077,7 +1084,7 @@ function PromptInspectorView({ llmCallId, sessionId }: { llmCallId: string; sess
 
       {segments.length > 0 ? (
         <div className="space-y-3">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <h2 className="section-heading">
             Prompt composition — click a segment
           </h2>
 
@@ -1089,12 +1096,14 @@ function PromptInspectorView({ llmCallId, sessionId }: { llmCallId: string; sess
                 <TooltipProvider key={i}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div
+                      <button
                         className={cn(
                           "h-full cursor-pointer transition-opacity hover:opacity-75",
                           selectedSeg === i && "ring-2 ring-ring ring-inset"
                         )}
-                        style={{ width: `${pct}%`, background: segColor(seg.sourceKind) }}
+                         style={{ width: `${pct}%`, background: segColor(seg.sourceKind) }}
+                         aria-label={`Inspect ${seg.sourceName}, approximately ${fmt(seg.tokenEst)} tokens`}
+                         aria-pressed={selectedSeg === i}
                         onClick={() => setSelectedSeg(selectedSeg === i ? null : i)}
                       />
                     </TooltipTrigger>
@@ -1150,13 +1159,14 @@ function PromptInspectorView({ llmCallId, sessionId }: { llmCallId: string; sess
       ) : messages ? (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
-            No segment data — enriched capture (§4.1) not active. Raw messages:
+            No segment attribution was recorded. Captured messages:
           </p>
-          <pre className="body-pre">{messages.slice(0, 4000)}</pre>
+          <pre className="body-pre">{messages}</pre>
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">No prompt data for this LLM call.</p>
       )}
+      {segments.length > 0 && messages && <details className="rounded-md border border-border p-4"><summary className="section-heading">Captured request messages</summary><pre className="body-pre mt-3">{messages}</pre></details>}
     </div>
   );
 }
@@ -1164,13 +1174,8 @@ function PromptInspectorView({ llmCallId, sessionId }: { llmCallId: string; sess
 // ── Compare — deltas ranked by magnitude, not flat grid ───────────────────────
 
 function CompareView() {
-  const [result, setResult] = useState<CompareResult | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    api.compare().then((d) => setResult(d.compare)).catch(console.error).finally(() => setLoading(false));
-  }, []);
+  const { data, loading, error, refresh } = useResource("compare", "initial", async () => api.compare());
+  const result = data?.compare;
 
   if (loading) {
     return (
@@ -1180,13 +1185,9 @@ function CompareView() {
     );
   }
   if (!result?.metrics.length) {
+    if (error) return <ReadError error={error} onRetry={refresh} />;
     return (
-      <div className="space-y-2">
-        <h1 className="text-lg font-semibold">Cross-Harness Compare</h1>
-        <p className="text-sm text-muted-foreground">
-          No data. Ingest traces from multiple harnesses first.
-        </p>
-      </div>
+      <div><h1 className="page-title">Compare</h1><div className="empty-workspace"><div><h2>Nothing comparable yet</h2><p>Sessions need recorded usage and associated turns to join a comparison. Missing measurements are excluded, never replaced with zeros.</p></div></div></div>
     );
   }
 
@@ -1205,29 +1206,22 @@ function CompareView() {
     ciLow,
     ciHigh,
     format,
-    lowerIsBetter,
   }: {
     label: string;
-    delta: number;
-    ciLow: number;
-    ciHigh: number;
+    delta: number | null;
+    ciLow: number | null;
+    ciHigh: number | null;
     format: (v: number) => string;
-    lowerIsBetter: boolean;
   }) {
-    const isImprovement = lowerIsBetter ? delta < 0 : delta > 0;
-    const colorClass = isImprovement
-      ? "text-[hsl(var(--green))]"
-      : delta === 0 ? "text-muted-foreground"
-      : "text-[hsl(var(--amber))]";
     return (
       <div className="flex items-center justify-between py-2 border-b border-border last:border-0">
         <span className="text-xs text-muted-foreground">{label}</span>
         <div className="text-right">
-          <span className={cn("text-sm font-semibold tabular-nums", colorClass)}>
-            {delta >= 0 ? "+" : ""}{format(delta)}
+          <span className="text-sm font-semibold tabular-nums">
+            {delta == null ? "Unknown" : `${delta >= 0 ? "+" : "−"}${format(Math.abs(delta))}`}
           </span>
           <span className="ml-2 text-[10px] text-muted-foreground tabular-nums">
-            95% CI [{format(ciLow)}, {format(ciHigh)}]
+            {ciLow == null || ciHigh == null ? "Interval not estimated" : `95% CI [${format(ciLow)}, ${format(ciHigh)}]`}
           </span>
         </div>
       </div>
@@ -1236,7 +1230,9 @@ function CompareView() {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-lg font-semibold">Cross-Harness Compare</h1>
+      <h1 className="page-title">Compare</h1>
+      <ReadError error={error} onRetry={refresh} />
+      <p className="text-sm text-secondary-foreground">{result.comparisonBasis ?? "Observed, unmatched workloads; differences do not establish a better harness."} {result.excludedSessionCount ?? 0} sessions excluded for missing measurements, missing turns, or unmatched calls.</p>
 
       {topInsights.length > 0 && (
         <div className="space-y-2">
@@ -1245,19 +1241,19 @@ function CompareView() {
       )}
 
       <div className="space-y-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <h2 className="section-heading">
           Per-harness metrics
         </h2>
-        <div className="rounded-lg border border-border overflow-hidden">
+        <div className="table-frame">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Harness</TableHead>
                 <TableHead>Sessions</TableHead>
-                <TableHead>Cache hit %</TableHead>
+                <TableHead>Cached input %</TableHead>
                 <TableHead>Tokens/turn</TableHead>
                 <TableHead>Cost/turn</TableHead>
-                <TableHead>Latency/turn</TableHead>
+                <TableHead>Model duration/turn</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1265,15 +1261,7 @@ function CompareView() {
                 <TableRow key={m.harness}>
                   <TableCell>
                     <span className="flex items-center gap-1.5">
-                      <span
-                        className="inline-block w-0.5 h-4 rounded-full shrink-0"
-                        style={{
-                          background:
-                            m.harness === "opencode" ? "hsl(var(--primary))"
-                            : m.harness === "vscode" ? "hsl(var(--purple))"
-                            : "hsl(var(--muted-foreground))",
-                        }}
-                      />
+                      <Circle className="h-3 w-3 text-muted-foreground" />
                       {m.harness}
                     </span>
                   </TableCell>
@@ -1281,7 +1269,7 @@ function CompareView() {
                   <TableCell>
                     <span className={cn(
                       "tabular-nums",
-                      m.meanCacheHitRatio > 0.5 ? "text-[hsl(var(--green))]" : "text-[hsl(var(--amber))]"
+                      "text-foreground"
                     )}>
                       {fmtRatio(m.meanCacheHitRatio)}
                     </span>
@@ -1299,7 +1287,7 @@ function CompareView() {
       {/* Sorted pairwise deltas — biggest impact first */}
       {sortedDeltas.length > 0 && (
         <div className="space-y-3">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <h2 className="section-heading">
             Pairwise deltas — ranked by cost impact
           </h2>
           {sortedDeltas.map((d) => (
@@ -1318,7 +1306,6 @@ function CompareView() {
                   ciLow={d.costPerTurnDelta.ciLow}
                   ciHigh={d.costPerTurnDelta.ciHigh}
                   format={fmtCost}
-                  lowerIsBetter
                 />
                 <DeltaRow
                   label="Tokens / turn"
@@ -1326,15 +1313,13 @@ function CompareView() {
                   ciLow={d.tokensPerTurnDelta.ciLow}
                   ciHigh={d.tokensPerTurnDelta.ciHigh}
                   format={(v) => fmt(v, 0)}
-                  lowerIsBetter
                 />
                 <DeltaRow
-                  label="Cache hit %"
+                  label="Cached input share"
                   delta={d.cacheHitRatioDelta.delta}
                   ciLow={d.cacheHitRatioDelta.ciLow}
                   ciHigh={d.cacheHitRatioDelta.ciHigh}
                   format={fmtRatio}
-                  lowerIsBetter={false}
                 />
               </CardContent>
             </Card>
@@ -1345,48 +1330,12 @@ function CompareView() {
   );
 }
 
-// ── Live Tail — explicit mode, not persistent sidebar ─────────────────────────
-
-function LiveTailView({ onClose }: { onClose: () => void }) {
-  const events = useLiveTail(true);
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          <span className="inline-block w-1.5 h-1.5 rounded-full bg-[hsl(var(--green))] live-pulse" />
-          Live tail
-        </div>
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose}>
-          <X className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-      <ScrollArea className="flex-1">
-        <div className="px-4 py-2 space-y-1">
-          {events.length === 0 && (
-            <p className="text-xs text-muted-foreground py-4">Waiting for events…</p>
-          )}
-          {events.map((e, i) => (
-            <div key={i} className="flex items-center gap-2 py-1.5 border-b border-border/50 last:border-0">
-              <Badge variant="neutral" className="text-[10px] shrink-0">{e.type}</Badge>
-              <code className="text-[10px] text-muted-foreground truncate">
-                {(e.data as Record<string, unknown>).id
-                  ? String((e.data as Record<string, unknown>).id).slice(0, 24)
-                  : "—"}
-              </code>
-            </div>
-          ))}
-        </div>
-      </ScrollArea>
-    </div>
-  );
-}
-
 // ── Omnibar ───────────────────────────────────────────────────────────────────
 
 const STATIC_COMMANDS = [
   { label: "Sessions", action: "sessions", icon: LayoutDashboard },
   { label: "Cross-Harness Compare", action: "compare", icon: GitCompare },
-  { label: "Live tail", action: "live-tail", icon: Radio },
+  { label: "Session activity", action: "live-tail", icon: Radio },
 ];
 
 function Omnibar({
@@ -1403,12 +1352,16 @@ function Omnibar({
   onLiveTail: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const navigatedRef = useRef<"page" | "activity" | null>(null);
+  const listId = useId();
 
   useEffect(() => {
     if (open) {
       setQuery("");
-      setTimeout(() => inputRef.current?.focus(), 0);
+      setActiveIndex(0);
     }
   }, [open]);
 
@@ -1435,7 +1388,14 @@ function Omnibar({
     ];
   }, [query, sessions]);
 
+  useEffect(() => {
+    if (open) document.getElementById(`${listId}-${activeIndex}`)?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, items, listId, open]);
+
+  useEffect(() => { setActiveIndex(0); }, [items]);
+
   function select(action: string) {
+    navigatedRef.current = action === "live-tail" ? "activity" : "page";
     if (action === "sessions") onNavigate({ page: "sessions" });
     else if (action === "compare") onNavigate({ page: "compare" });
     else if (action === "live-tail") onLiveTail();
@@ -1445,44 +1405,88 @@ function Omnibar({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="p-0 gap-0 overflow-hidden max-w-xl">
-        <div className="flex items-center gap-3 px-4 border-b border-border">
+      <DialogContent
+        className="p-0 gap-0 overflow-hidden max-w-xl max-h-[75dvh] flex flex-col"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          navigatedRef.current = null;
+          inputRef.current?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (navigatedRef.current === "page") document.querySelector<HTMLElement>("main")?.focus();
+          else if (navigatedRef.current === "activity" && document.querySelector("#session-activity")) document.querySelector<HTMLElement>("#session-activity")?.focus();
+          else if (openerRef.current?.isConnected) openerRef.current.focus();
+        }}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+            event.preventDefault();
+            event.stopPropagation();
+            inputRef.current?.focus();
+          } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            if (items.length) setActiveIndex(index => Math.max(0, Math.min(items.length - 1, index + (event.key === "ArrowDown" ? 1 : -1))));
+            inputRef.current?.focus();
+          }
+        }}
+      >
+        <DialogTitle className="sr-only">Search sessions and commands</DialogTitle>
+        <DialogDescription className="sr-only">Search loaded sessions by title, ID, agent, or model. Use the arrow keys to select a result and Enter to open it.</DialogDescription>
+        <div className="flex shrink-0 items-center gap-3 px-4 border-b border-border">
           <Command className="h-4 w-4 text-muted-foreground shrink-0" />
           <input
             ref={inputRef}
-            className="flex-1 py-4 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+            className="flex-1 min-w-0 py-4 pr-8 bg-transparent text-sm text-foreground placeholder:text-secondary-foreground outline-none"
+            aria-label="Search sessions and commands"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={open}
+            aria-controls={listId}
+            aria-activedescendant={items[activeIndex] ? `${listId}-${activeIndex}` : undefined}
             placeholder="Search sessions, go to view…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => { setQuery(e.target.value); setActiveIndex(0); }}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && items[0]) select(items[0].action);
-              if (e.key === "Escape") onClose();
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                if (items[activeIndex]) select(items[activeIndex].action);
+              }
             }}
           />
         </div>
-        <div className="max-h-80 overflow-y-auto">
+        <div id={listId} role="listbox" aria-label="Matching commands and sessions" className="min-h-0 max-h-80 overflow-y-auto">
           {items.length === 0 && (
-            <p className="px-4 py-6 text-center text-xs text-muted-foreground">No results</p>
+            <p className="px-4 py-6 text-center text-xs text-secondary-foreground">No matching loaded sessions or commands</p>
           )}
-          {items.map((item) => {
+          {items.map((item, index) => {
             const Icon = item.icon;
             return (
               <button
                 key={item.action}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-accent transition-colors text-sm"
+                id={`${listId}-${index}`}
+                role="option"
+                aria-selected={index === activeIndex}
+                tabIndex={-1}
+                className={cn("w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors text-sm", index === activeIndex && "bg-accent")}
+                onPointerMove={() => setActiveIndex(index)}
+                onPointerDown={(event) => event.preventDefault()}
                 onClick={() => select(item.action)}
               >
                 <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div className="flex-1 min-w-0">
                   <span className="text-foreground">{item.label}</span>
                   {item.sublabel && (
-                    <span className="ml-2 text-xs text-muted-foreground">{item.sublabel}</span>
+                    <span className="block truncate text-xs text-secondary-foreground">{item.sublabel}</span>
                   )}
                 </div>
               </button>
             );
           })}
         </div>
+        <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">{items.length} {items.length === 1 ? "result" : "results"} in loaded sessions and commands</p>
+        <p className="shrink-0 border-t border-border px-4 py-2 text-[11px] text-secondary-foreground">↑↓ Navigate · Enter Open · Esc Close</p>
       </DialogContent>
     </Dialog>
   );
@@ -1492,41 +1496,45 @@ function Omnibar({
 
 function Breadcrumb({
   view,
-  history,
+  sessions,
   onNavigate,
 }: {
   view: View;
-  history: View[];
+  sessions: SessionRecord[];
   onNavigate: (v: View) => void;
 }) {
   const crumbs: { label: string; view: View }[] = [
     { label: "Sessions", view: { page: "sessions" } },
   ];
-  if (view.page === "session") crumbs.push({ label: view.id.slice(0, 10) + "…", view });
+  const sid = view.page === "session" ? view.id : "sessionId" in view ? view.sessionId : null;
+  const title = sessions.find(s => s.id === sid)?.title || "Session";
+  if (view.page === "session") crumbs.push({ label: title, view });
   if (view.page === "turn") {
-    const prev = history.find((h) => h.page === "session") as ({ page: "session"; id: string } | undefined);
-    if (prev) crumbs.push({ label: "Session", view: prev });
-    crumbs.push({ label: `Turn ${view.id.slice(0, 6)}`, view });
+    crumbs.push({ label: title, view: { page: "session", id: view.sessionId } });
+    crumbs.push({ label: "Turn detail", view });
   }
-  if (view.page === "cache") crumbs.push({ label: "Cache detail", view });
-  if (view.page === "prompt") crumbs.push({ label: "Prompt Inspector", view });
+  if (view.page === "cache" || view.page === "prompt") {
+    crumbs.push({ label: title, view: { page: "session", id: view.sessionId } });
+    crumbs.push({ label: view.page === "cache" ? "Cache detail" : "Prompt inspector", view });
+  }
   if (view.page === "compare") crumbs.push({ label: "Compare", view });
 
   return (
-    <nav className="flex items-center gap-1 mb-5 text-xs text-muted-foreground">
+    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
       {crumbs.map((c, i) => (
-        <span key={i} className="flex items-center gap-1">
+        <span key={i} className="flex min-w-0 items-center gap-2">
           {i > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground/50" />}
-          <span
+          <button
+            aria-current={i === crumbs.length - 1 ? "page" : undefined}
             className={cn(
               i === crumbs.length - 1
-                ? "text-foreground"
-                : "cursor-pointer hover:text-foreground transition-colors"
+                ? "truncate text-foreground"
+                : "truncate hover:text-foreground transition-colors"
             )}
             onClick={() => i < crumbs.length - 1 && onNavigate(c.view)}
           >
             {c.label}
-          </span>
+          </button>
         </span>
       ))}
     </nav>
@@ -1567,10 +1575,18 @@ function hashToView(hash: string): View {
 
 export function App() {
   const [view, setView] = useState<View>(() => hashToView(window.location.hash));
-  const [history, setHistory] = useState<View[]>([]);
+  const [railOpen, setRailOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const mobileMenuRef = useRef<HTMLButtonElement>(null);
+  const drawerDestination = useRef<"workspace" | "activity" | "dialog" | null>(null);
   const [omnibarOpen, setOmnibarOpen] = useState(false);
   const [liveTailOpen, setLiveTailOpen] = useState(false);
-  const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const live = useLiveTail(true);
+  const { data: collectorInfo } = useResource("collector-info", "initial", api.health);
+  const { data: sessionList, loading: sessionsLoading, error: sessionsError, refresh: refreshSessions } = useResource("session-list", `${live.connections}:${live.receivedCount}`, api.sessions);
+  const sessions = sessionList?.sessions ?? [];
+  const liveButtonRef = useRef<HTMLButtonElement>(null);
+  const sessionRevision = (id: string) => `${live.connections}:${live.activities.find(a => a.sessionId === id)?.revision ?? 0}`;
   // Ordered turn list kept warm for j/k navigation — populated whenever we're
   // anywhere inside a session (turn, cache, prompt pages).
   const [sessionTurns, setSessionTurns] = useState<TurnRecord[]>([]);
@@ -1578,16 +1594,20 @@ export function App() {
   const viewRef = useRef<View>({ page: "sessions" });
   const sessionTurnsRef = useRef<TurnRecord[]>([]);
   const navigateRef = useRef<(v: View) => void>(() => {});
+  const goPrefix = useRef(0);
+  useEffect(() => {
+    const mobile = window.matchMedia("(max-width: 767px)");
+    const onChange = () => { if (!mobile.matches) setRailOpen(false); };
+    mobile.addEventListener("change", onChange);
+    return () => mobile.removeEventListener("change", onChange);
+  }, []);
 
   // Sync URL → view on browser back/forward
   useEffect(() => {
-    const onPop = () => setView(hashToView(window.location.hash));
+    const onPop = () => { setView(hashToView(window.location.hash)); setRailOpen(false); };
     window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-
-  useEffect(() => {
-    api.sessions().then((d) => setSessions(d.sessions)).catch(console.error);
+    window.addEventListener("hashchange", onPop);
+    return () => { window.removeEventListener("popstate", onPop); window.removeEventListener("hashchange", onPop); };
   }, []);
 
   // Keep sessionTurns warm whenever we land on any session-scoped page
@@ -1597,34 +1617,52 @@ export function App() {
       view.page === "session" ? view.id :
       view.page === "cache"   ? view.sessionId :
       view.page === "prompt"  ? view.sessionId : null;
+    let cancelled = false;
+    setSessionTurns([]);
+    sessionTurnsRef.current = [];
     if (sid) {
       api.turns(sid)
         .then((d) => {
+          if (cancelled) return;
           setSessionTurns(d.turns);
           sessionTurnsRef.current = d.turns;
         })
         .catch(console.error);
     }
     viewRef.current = view;
+    return () => { cancelled = true; };
   }, [view]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Skip when typing in an input or the omnibar
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) return;
-
+      if (e.defaultPrevented || e.isComposing) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setOmnibarOpen((v) => !v);
+        drawerDestination.current = "dialog";
+        setRailOpen(false);
+        setOmnibarOpen(true);
         return;
       }
-      if (e.key === "Escape") { setOmnibarOpen(false); return; }
+      // Plain-key navigation must not run while typing or inside a dialog.
+      const target = e.target as HTMLElement;
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.tagName === "SELECT" || target?.isContentEditable || target?.closest('[role="dialog"], [data-background-controls]')) return;
+      if (e.key === "Escape") { setOmnibarOpen(false); setRailOpen(false); setLiveTailOpen(false); return; }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "?") { e.preventDefault(); setShortcutsOpen(true); return; }
+      if (e.key === "/") { e.preventDefault(); document.querySelector<HTMLInputElement>('[aria-label="Filter loaded sessions"]')?.focus(); return; }
+      if (e.key === "g") { goPrefix.current = Date.now(); return; }
+      if (Date.now() - goPrefix.current < 800) {
+        goPrefix.current = 0;
+        if (e.key === "s") { e.preventDefault(); navigateRef.current({ page: "sessions" }); return; }
+        if (e.key === "c") { e.preventDefault(); navigateRef.current({ page: "compare" }); return; }
+      }
+      if (e.key === "a") { e.preventDefault(); setLiveTailOpen(v => !v); return; }
 
       // j = next turn  /  k = prev turn
       if (e.key === "j" || e.key === "k") {
         const current = viewRef.current;
         if (current.page !== "turn") return;
+        e.preventDefault();
         const turns = sessionTurnsRef.current;
         const idx = turns.findIndex((t) => t.id === current.id);
         if (idx === -1) return;
@@ -1639,11 +1677,13 @@ export function App() {
   }, []);
 
   function navigate(next: View) {
-    setHistory((h) => [...h, view]);
+    drawerDestination.current = "workspace";
+    setLiveTailOpen(false);
+    setRailOpen(false);
     window.history.pushState(null, "", viewToHash(next));
     setView(next);
     if (next.page === "sessions") {
-      api.sessions().then((d) => setSessions(d.sessions)).catch(console.error);
+      refreshSessions();
     }
   }
 
@@ -1651,86 +1691,121 @@ export function App() {
   navigateRef.current = navigate;
 
   const navItems = [
-    { page: "sessions" as const, label: "Sessions", icon: LayoutDashboard },
+    { page: "sessions" as const, label: "Session review", icon: Layers },
     { page: "compare" as const, label: "Compare", icon: GitCompare },
   ];
 
-  return (
-    <div className="flex flex-col min-h-screen bg-background">
-      {/* Topbar */}
-      <header className="sticky top-0 z-10 flex h-11 items-center justify-between border-b border-border bg-card/80 backdrop-blur-sm px-4">
-        <div className="flex items-center gap-4">
-          <span className="flex items-center gap-1.5">
-            <Activity className="h-3.5 w-3.5 text-primary" />
-            <span className="text-[11px] font-bold tracking-widest uppercase text-primary">
-              agent-profiler
-            </span>
-          </span>
-          <Separator orientation="vertical" className="h-4" />
-          <nav className="flex gap-0.5">
+  const railContent = <>
+        <div className="workspace-brand"><span className="brand-mark"><SlidersHorizontal className="h-4 w-4" /></span><span>Agent Profiler</span></div>
+        <button className="rail-link mb-4" aria-label="Search sessions and commands" onClick={() => { drawerDestination.current = "dialog"; setRailOpen(false); setOmnibarOpen(true); }}><Search className="h-4 w-4" />Search anything<kbd>⌘ K</kbd></button>
+        <nav aria-label="Main navigation">
             {navItems.map(({ page, label, icon: Icon }) => (
               <button
                 key={page}
                 onClick={() => navigate({ page })}
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
-                  view.page === page
-                    ? "bg-secondary text-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-                )}
+                className="rail-link"
+                aria-current={(page === "sessions" ? view.page !== "compare" : view.page === page) ? "page" : undefined}
               >
-                <Icon className="h-3.5 w-3.5" />
+                <Icon className="h-4 w-4" />
                 {label}
+                <kbd>{page === "sessions" ? "G S" : "G C"}</kbd>
               </button>
             ))}
-          </nav>
+        </nav>
+        <button className="rail-link" aria-pressed={liveTailOpen} onClick={() => { drawerDestination.current = "activity"; setLiveTailOpen(v => !v); setRailOpen(false); }}><Radio className="h-4 w-4" />Activity<kbd>A</kbd></button>
+        <p className="rail-label">Recent sessions</p>
+        <div className="rail-recent">
+          {sessions.slice(0, 7).map(s => <a key={s.id} href={viewToHash({ page: "session", id: s.id })} className="rail-link" title={s.title || s.id} onClick={e => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); navigate({ page: "session", id: s.id }); }}><Circle className="h-3 w-3 shrink-0" /><span className="truncate">{s.title || "Untitled session"}</span></a>)}
+          {!sessions.length && <p className="px-2 text-xs text-muted-foreground">Your sessions will appear here.</p>}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="mt-5 border-t border-border pt-3">
+          <button className="rail-link" onClick={() => { drawerDestination.current = "dialog"; setRailOpen(false); setShortcutsOpen(true); }}><Keyboard className="h-4 w-4" />Keyboard shortcuts<kbd>?</kbd></button>
+          <p className="mt-3 flex items-center gap-2 px-2 text-xs text-muted-foreground"><span className={cn("h-1.5 w-1.5 rounded-full", live.connection === "connected" ? "bg-green" : "bg-amber")} />{{ connected: "Collector connected", connecting: "Connecting…", reconnecting: "Reconnecting…", disconnected: "Disconnected" }[live.connection]}</p>
+          <p className="mt-1 px-2 text-[11px] text-muted-foreground">Local workspace · Data stays here</p>
+        </div>
+      </>;
+
+  return (
+    <div className="app-shell">
+      <a href="#workspace" onClick={event => { event.preventDefault(); document.querySelector<HTMLElement>("main")?.focus(); }} className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:bg-popover focus:p-3">Skip to workspace</a>
+      <aside className="workspace-rail" aria-label="Workspace navigation">{railContent}</aside>
+      <div className="workspace-frame">
+      <header className="workspace-bar">
+        <div className="flex min-w-0 items-center gap-3">
+          <Dialog open={railOpen} onOpenChange={open => { if (open) drawerDestination.current = null; setRailOpen(open); }}>
+            <DialogTrigger asChild><Button ref={mobileMenuRef} variant="ghost" size="icon" className="mobile-menu-button" aria-label="Open navigation"><Menu className="h-4 w-4" /></Button></DialogTrigger>
+            <DialogContent aria-modal="true" className="left-0 top-0 flex h-dvh max-h-none w-[min(300px,85vw)] max-w-none translate-x-0 flex-col rounded-none border-0 border-r border-border bg-rail px-3 pb-3 pt-5"
+              onCloseAutoFocus={event => {
+                event.preventDefault();
+                const destination = drawerDestination.current;
+                drawerDestination.current = null;
+                if (destination === "dialog") return;
+                requestAnimationFrame(() => {
+                  if (destination === "workspace" || !window.matchMedia("(max-width: 767px)").matches) document.querySelector<HTMLElement>("main")?.focus();
+                  else if (destination === "activity") (document.querySelector<HTMLElement>("#session-activity") ?? document.querySelector<HTMLElement>("main"))?.focus();
+                  else mobileMenuRef.current?.focus();
+                });
+              }}>
+              <DialogTitle className="sr-only">Workspace navigation</DialogTitle>
+              <DialogDescription className="sr-only">Choose a view or recent session. Escape closes navigation.</DialogDescription>
+              {railContent}
+            </DialogContent>
+          </Dialog>
+          <Breadcrumb view={view} sessions={sessions} onNavigate={navigate} />
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <AnimalBackground />
           <Button
+            ref={liveButtonRef}
             variant="ghost"
             size="sm"
+            aria-label={liveTailOpen ? "Hide session activity" : "Show session activity"}
+            aria-expanded={liveTailOpen}
+            aria-controls="session-activity"
             onClick={() => setLiveTailOpen((v) => !v)}
             className={cn(
               "gap-1.5 text-xs",
-              liveTailOpen && "text-[hsl(var(--green))] border-[hsl(var(--green))]/30 border"
+              liveTailOpen && "border border-border text-foreground"
             )}
           >
-            <Radio className={cn("h-3.5 w-3.5", liveTailOpen && "live-pulse")} />
-            {liveTailOpen ? "Live" : "Live tail"}
+            <Radio className="h-3.5 w-3.5" /><span className="hidden sm:inline">Activity</span>
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setOmnibarOpen(true)} className="gap-1.5 text-xs text-muted-foreground">
-            <Command className="h-3.5 w-3.5" />K
+          <Button variant="ghost" size="sm" aria-label="Search sessions and commands" onClick={() => setOmnibarOpen(true)} className="gap-1.5 text-xs text-muted-foreground">
+            <Search className="h-3.5 w-3.5" /><kbd className="hidden sm:inline">⌘ K</kbd>
           </Button>
         </div>
       </header>
+      {collectorInfo?.demo && <p role="status" className="flex flex-wrap items-center gap-x-2 border-b border-border bg-card px-7 py-2 text-xs text-secondary-foreground"><span className="font-medium text-primary">Demo workspace</span> Synthetic data · Your captured sessions are unchanged.</p>}
 
       {/* Main layout */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="workspace-body" data-activity={liveTailOpen}>
         {/* Content */}
-        <main className="flex-1 overflow-y-auto px-6 py-5">
-          <Breadcrumb view={view} history={history} onNavigate={navigate} />
+        <main id="workspace" tabIndex={-1} aria-label="Profiler workspace" className="workspace-main">
 
           {view.page === "sessions" && (
-            <SessionsView onSelect={(id) => navigate({ page: "session", id })} />
+            <SessionsView sessions={sessions} loading={sessionsLoading} error={sessionsError} onRetry={refreshSessions} onSelect={(id) => navigate({ page: "session", id })} />
           )}
           {view.page === "session" && (
             <SessionDetailView
               sessionId={view.id}
+              refreshKey={sessionRevision(view.id)}
               onTurnSelect={(id) => navigate({ page: "turn", id, sessionId: view.id })}
               onCacheView={() => navigate({ page: "cache", sessionId: view.id })}
+              onPromptView={llmCallId => navigate({ page: "prompt", llmCallId, sessionId: view.id })}
             />
           )}
           {view.page === "turn" && (
             <TurnDetailView
               turnId={view.id}
               sessionId={view.sessionId}
+              refreshKey={sessionRevision(view.sessionId)}
               allTurns={sessionTurns}
               onPromptView={(llmCallId) =>
                 navigate({ page: "prompt", llmCallId, sessionId: view.sessionId })
               }
             />
           )}
-          {view.page === "cache" && <CachePanelView sessionId={view.sessionId} />}
+          {view.page === "cache" && <CachePanelView sessionId={view.sessionId} refreshKey={sessionRevision(view.sessionId)} onTurnSelect={id => navigate({ page: "turn", id, sessionId: view.sessionId })} />}
           {view.page === "prompt" && (
             <PromptInspectorView llmCallId={view.llmCallId} sessionId={view.sessionId} />
           )}
@@ -1739,11 +1814,29 @@ export function App() {
 
         {/* Live tail — separate panel, not persistent sidebar */}
         {liveTailOpen && (
-          <aside className="w-64 border-l border-border bg-card flex flex-col shrink-0">
-            <LiveTailView onClose={() => setLiveTailOpen(false)} />
+          <aside className="activity-panel">
+            <LiveActivity live={live} onClose={() => { setLiveTailOpen(false); liveButtonRef.current?.focus(); }} onOpenSession={id => { navigate({ page: "session", id }); setLiveTailOpen(false); requestAnimationFrame(() => document.querySelector<HTMLElement>("main")?.focus()); }} />
           </aside>
         )}
       </div>
+      </div>
+
+      <Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
+        <DialogContent className="max-w-md">
+          <DialogTitle className="text-base font-semibold">Move without the mouse</DialogTitle>
+          <DialogDescription className="text-xs text-muted-foreground">Shortcuts are inactive while typing, except command search.</DialogDescription>
+          <dl className="shortcut-list mt-4 text-[13px]">
+            <dt>Search sessions & commands</dt><dd><kbd>⌘ / Ctrl K</kbd></dd>
+            <dt>Go to session review</dt><dd><kbd>G</kbd> <kbd>S</kbd></dd>
+            <dt>Go to compare</dt><dd><kbd>G</kbd> <kbd>C</kbd></dd>
+            <dt>Toggle activity</dt><dd><kbd>A</kbd></dd>
+            <dt>Filter sessions</dt><dd><kbd>/</kbd></dd>
+            <dt>Next / previous session or turn</dt><dd><kbd>J</kbd> <kbd>K</kbd></dd>
+            <dt>Open selected session</dt><dd><kbd>Enter</kbd></dd>
+            <dt>Show keyboard shortcuts</dt><dd><kbd>?</kbd></dd>
+          </dl>
+        </DialogContent>
+      </Dialog>
 
       <Omnibar
         open={omnibarOpen}

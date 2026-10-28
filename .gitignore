@@ -11,3 +11,5 @@ coverage
 .vite
 /.bun
 *.bun-build
+**/.impeccable/review/
+**/.impeccable/mocks/

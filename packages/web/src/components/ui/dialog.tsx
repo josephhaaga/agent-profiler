@@ -7,6 +7,8 @@ const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
 const DialogPortal = DialogPrimitive.Portal;
 const DialogClose = DialogPrimitive.Close;
+const DialogTitle = DialogPrimitive.Title;
+const DialogDescription = DialogPrimitive.Description;
 
 const DialogOverlay = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Overlay>,
@@ -15,7 +17,7 @@ const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-50 bg-black/60",
       className
     )}
     {...props}
@@ -32,7 +34,7 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-[50%] top-[15%] z-50 w-full max-w-2xl translate-x-[-50%] rounded-xl border border-border bg-popover shadow-2xl duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=open]:slide-in-from-left-1/2",
+        "fixed left-1/2 top-[12%] z-50 w-[calc(100%_-_2rem)] max-w-2xl max-h-[80dvh] overflow-auto translate-x-[-50%] rounded-lg border border-input bg-popover p-6 shadow-2xl",
         className
       )}
       {...props}
@@ -47,4 +49,4 @@ const DialogContent = React.forwardRef<
 ));
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
-export { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogClose };
+export { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogClose, DialogTitle, DialogDescription };

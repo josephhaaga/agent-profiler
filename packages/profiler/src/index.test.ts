@@ -132,7 +132,7 @@ describe("analyzeCacheEfficiency", () => {
     expect(r.hitRatio).toBeLessThan(0.3);
     expect(r.insights.some((i) => i.kind === "cache.low_hit_ratio")).toBe(true);
     const ins = r.insights.find((i) => i.kind === "cache.low_hit_ratio")!;
-    expect(ins.severity).toBe("critical"); // < 0.1
+    expect(ins.severity).toBe("info"); // A low observed share does not prove a cache failure.
   });
 
   test("emits warn insight for prefix volatility with static segments", () => {
@@ -218,7 +218,7 @@ describe("analyzeComposition", () => {
     expect(r.insights).toHaveLength(0);
   });
 
-  test("detects tool-def bloat when >25% of tokens are tool schemas", () => {
+  test("does not invent request percentages from session-wide tool inventory", () => {
     const store = new Store();
     seedSession(store, "sess-1");
     const turn = seedTurn(store, { sessionId: "sess-1" });
@@ -235,8 +235,8 @@ describe("analyzeComposition", () => {
 
     const r = analyzeComposition(llm.id, "sess-1", store);
     expect(r.toolDefsTokens).toBe(650);
-    expect(r.toolDefsFraction).toBeGreaterThan(0.25);
-    expect(r.insights.some((i) => i.kind === "composition.tool_defs_bloat")).toBe(true);
+    expect(r.toolDefsFraction).toBeNull();
+    expect(r.insights.some((i) => i.kind === "composition.tool_defs_bloat")).toBe(false);
   });
 
   test("detects duplicate segments by sha256", () => {

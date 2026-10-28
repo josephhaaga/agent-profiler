@@ -1,4 +1,4 @@
-import { ingestOtlpPayload } from "@agent-profiler/ingest";
+import { ingestOtlpPayload, IngestValidationError } from "@agent-profiler/ingest";
 import type { OtlpExportRequest } from "@agent-profiler/ingest";
 import { analyzeCompare, runProfilers } from "@agent-profiler/profiler";
 import { Store } from "@agent-profiler/store";
@@ -30,6 +30,18 @@ function broadcast(type: string, data: unknown): void {
       sseClients.delete(ctrl);
     }
   }
+}
+
+async function profileSession(sessionId: string) {
+  const previous = new Map(store.listSessionInsights(sessionId).map(i => [i.id, JSON.stringify(i)]));
+  const insights = await runProfilers(sessionId, store);
+  const changed = insights.filter(i => previous.get(i.id) !== JSON.stringify(i));
+  if (changed.length || insights.length !== previous.size) {
+    // The replacement snapshot also retires findings which no longer apply.
+    broadcast("insights", { sessionId, insights });
+    for (const insight of changed) broadcast("insight", insight);
+  }
+  return insights;
 }
 
 // ── CORS helper ───────────────────────────────────────────────────────────────
@@ -111,7 +123,7 @@ const server = Bun.serve({
     // ── Health ──────────────────────────────────────────────────────────────
 
     if (pathname === "/healthz") {
-      return json({ ok: true, name: "agent-profiler", version: "0.1.0" });
+      return json({ ok: true, name: "agent-profiler", version: "0.1.0", demo: process.env.AGENT_PROFILER_DEMO === "true" });
     }
 
     // ── OTLP ingest ─────────────────────────────────────────────────────────
@@ -138,25 +150,25 @@ const server = Bun.serve({
       }
 
       try {
-        const result = await ingestOtlpPayload(payload, store, (event) => broadcast(event.type, store.present(event.data as { id: string })));
+        const affectedSessions = new Set<string>();
+        const result = await ingestOtlpPayload(payload, store, (event) => {
+          const record = event.data as { id: string; sessionId?: string };
+          if (event.type === "session") affectedSessions.add(record.id);
+          else if (record.sessionId) affectedSessions.add(record.sessionId);
+          broadcast(event.type, store.present(record));
+        });
         console.log(`[ingest] sessions=${result.sessionsUpserted} turns=${result.turnsUpserted} llm=${result.llmCallsUpserted} tools=${result.toolCallsUpserted}`);
 
-        // Run profilers for each new session (fire and forget)
-        for (const rs of payload.resourceSpans ?? []) {
-          for (const ss of rs.scopeSpans ?? []) {
-            for (const span of ss.spans ?? []) {
-              const attrs: Record<string, unknown> = {};
-              for (const kv of span.attributes ?? []) {
-                if ("stringValue" in kv.value) attrs[kv.key] = kv.value.stringValue;
-              }
-              const sessionId = String(attrs["session.id"] ?? span.spanId);
-              runProfilers(sessionId, store).then((insights) => {
-                for (const insight of insights) broadcast("insight", insight);
-              }).catch((e: unknown) => console.error("[profiler]", e));
-            }
-          }
+        // Once per affected session, not once per span. Await the reconciliation
+        // so successful ingestion exposes a coherent set of current findings.
+        const analysisFailed: string[] = [];
+        for (const sessionId of affectedSessions) {
+          try { await profileSession(sessionId); }
+          catch { analysisFailed.push(sessionId); }
         }
+        if (analysisFailed.length) return json({ accepted: true, analysis: "failed", sessionIds: analysisFailed }, 202);
       } catch (err) {
+        if (err instanceof IngestValidationError) return json({ error: err.message }, 400);
         console.error("[ingest] error processing OTLP payload:", err);
         return new Response("Internal error", { status: 500, headers: corsHeaders() });
       }
@@ -173,6 +185,10 @@ const server = Bun.serve({
       try {
         const result = importOpenCodeExport(data, store);
         broadcast("session", store.present(store.getSession(result.sessionId)!));
+        if (!result.skipped) {
+          try { await profileSession(result.sessionId); }
+          catch { return json({ ...result, accepted: true, analysis: "failed" }, 202); }
+        }
         return json(result);
       } catch (error) {
         console.error("[import] failed:", error instanceof Error ? error.name : "unknown error");
@@ -201,7 +217,7 @@ const server = Bun.serve({
     const sessionInsightsMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/insights$/);
     if (sessionInsightsMatch && req.method === "GET") {
       const id = sessionInsightsMatch[1]!;
-      return json({ insights: store.listInsights("session", id) });
+      return json({ insights: store.listSessionInsights(id) });
     }
 
     // ── Turns API ────────────────────────────────────────────────────────────
@@ -265,7 +281,7 @@ const server = Bun.serve({
     const profileMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/profile$/);
     if (profileMatch && req.method === "POST") {
       const id = profileMatch[1]!;
-      const insights = await runProfilers(id, store);
+      const insights = await profileSession(id);
       return json({ insights });
     }
 
