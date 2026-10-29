@@ -75,6 +75,14 @@ export class V2Adapter {
 
   onEvent(event: PublicEvent): void {
     switch (event.type) {
+      case "session.created": {
+        if (event.data.title) this.builder.setSessionTitle(event.data.sessionID, event.data.title);
+        break;
+      }
+      case "session.renamed": {
+        this.builder.setSessionTitle(event.data.sessionID, event.data.title);
+        break;
+      }
       case "session.step.started": {
         this.steps.set(event.data.assistantMessageID, { sessionID: event.data.sessionID, model: event.data.model, text: new Map() });
         break;

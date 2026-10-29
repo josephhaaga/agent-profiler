@@ -32,6 +32,7 @@ import {
   buildInputMessages,
   type OIMessage,
 } from "./messages.js";
+import { setStr } from "./attributes.js";
 
 interface OpenLlm {
   span: Span;
@@ -149,6 +150,13 @@ export class TraceBuilder {
       s.span.setAttribute(SemanticConventions.AGENT_NAME, agent);
     }
     return s;
+  }
+
+  /** Attach the OpenCode-provided title before the session span is exported. */
+  setSessionTitle(sessionID: string, title: string): void {
+    if (!title) return;
+    const session = this.ensureSession(sessionID);
+    setStr(session.span, "session.title", title, this.config.maxAttrChars);
   }
 
   endSession(sessionID: string, errored = false, force = false): void {

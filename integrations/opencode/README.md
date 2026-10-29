@@ -8,7 +8,7 @@ Add to `~/.config/opencode/opencode.json`, preserving unrelated settings:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-agent-profiler@0.4.2"]
+  "plugins": ["opencode-agent-profiler@0.4.3"]
 }
 ```
 

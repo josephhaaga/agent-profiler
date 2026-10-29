@@ -7,6 +7,7 @@ import { Store } from "@agent-profiler/store";
 
 function makeOtlpTrace(overrides: Partial<{
   sessionId: string;
+  title: string;
   agentName: string;
   model: string;
   promptTokens: number;
@@ -18,6 +19,7 @@ function makeOtlpTrace(overrides: Partial<{
 }> = {}): OtlpExportRequest {
   const o = {
     sessionId: "test-session",
+    title: "Investigate test traces",
     agentName: "test-agent",
     model: "claude-opus-4-5",
     promptTokens: 1200,
@@ -47,6 +49,7 @@ function makeOtlpTrace(overrides: Partial<{
             attributes: [
               { key: "openinference.span.kind", value: { stringValue: "CHAIN" } },
               { key: "session.id", value: { stringValue: o.sessionId } },
+              { key: "session.title", value: { stringValue: o.title } },
               { key: "agent.name", value: { stringValue: o.agentName } },
             ],
           },
@@ -126,6 +129,7 @@ describe("ingestOtlpPayload", () => {
     const result = await ingestOtlpPayload(makeOtlpTrace(), store);
 
     expect(result.sessionsUpserted).toBe(1);
+    expect(store.getSession("test-session")!.title).toBe("Investigate test traces");
     expect(result.turnsUpserted).toBe(1);
     expect(result.llmCallsUpserted).toBe(1);
     expect(result.toolCallsUpserted).toBe(1);

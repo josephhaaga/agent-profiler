@@ -552,6 +552,7 @@ function processSessionRoot(
 
   const session: SessionRecord = {
     id: sessionId,
+    title: str(attrs, "session.title"),
     harness,
     agent: agentName ?? (typeof meta.agent === "string" ? meta.agent : undefined),
     model,

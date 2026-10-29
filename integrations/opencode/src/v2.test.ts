@@ -88,6 +88,18 @@ describe("OpenCode V2 tracing", () => {
     await h.provider.shutdown();
   });
 
+  test("adds and refreshes the OpenCode session title on the root span", async () => {
+    const h = harness();
+    h.event("session.created", { sessionID: "named-session", title: "New session" });
+    h.event("session.renamed", { sessionID: "named-session", title: "Review authentication flow" });
+    h.request("named-session", "Inspect the project");
+    h.start("named-session", "step-1"); h.end("named-session", "step-1");
+    h.event("session.execution.succeeded", { sessionID: "named-session" });
+    const session = h.exporter.getFinishedSpans().find((span) => span.name === "session named-session")!;
+    expect(session.attributes["session.title"]).toBe("Review authentication flow");
+    await h.provider.shutdown();
+  });
+
   test("interleaved sessions never share request content", async () => {
     const h = harness();
     h.request("a", "only-a"); h.request("b", "only-b");

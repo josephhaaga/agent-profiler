@@ -1,5 +1,18 @@
 # Changelog
 
+## Agent Profiler 0.3.1 / OpenCode plugin 0.4.3
+
+### Session titles
+
+- Capture OpenCode V2 session titles when sessions are created or renamed, then
+  persist them through trace ingestion so the session review UI can display them.
+
+### Upgrade
+
+1. Install `@josephhaaga/agent-profiler@0.3.1` and restart the collector.
+2. Use `opencode-agent-profiler@0.4.3` for titled live sessions.
+3. Run `agent-profiler import opencode` to backfill titles from saved history.
+
 ## Agent Profiler 0.3.0 / OpenCode plugin 0.4.2
 
 ### Workbench

@@ -5,7 +5,7 @@ from OpenCode (and other harnesses), stores them in SQLite, and serves a
 keyboard-driven web UI with evidence-led findings, recorded-error triage,
 cache accounting, prompt inspection, and descriptive cross-harness comparison.
 
-See [CHANGELOG.md](CHANGELOG.md) for the CLI 0.3.0 / OpenCode plugin 0.4.2 release
+See [CHANGELOG.md](CHANGELOG.md) for the CLI 0.3.1 / OpenCode plugin 0.4.3 release
 and upgrade instructions.
 
 ### Try synthetic data without instrumentation
@@ -59,7 +59,7 @@ Add one line to your `opencode.json` (project-level or `~/.config/opencode/openc
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-agent-profiler@0.4.2"]
+  "plugins": ["opencode-agent-profiler@0.4.3"]
 }
 ```
 
